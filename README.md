@@ -142,6 +142,30 @@ was followed:
 mvn -B -ntp verify
 ```
 
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/ci.yml` | push to `main`, every PR | `mvn verify` (tests + SpotBugs) on JDK 17 and 21; uploads the `.hpi` (JDK 21) and test reports on failure |
+| `.github/workflows/release.yml` | tag `vX.Y.Z` or manual run with a version | builds with that version, creates a GitHub Release with `docker-sandbox-X.Y.Z.hpi` + `.sha256`, then runs the `deploy` job |
+| `.github/dependabot.yml` | weekly | dependency PRs for Maven and GitHub Actions |
+
+Release:
+
+```
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+Tags with a suffix (`v1.1.0-rc.1`) are published as pre-releases.
+
+Deploy to your own Jenkins (optional): add repository secrets `JENKINS_URL`, `JENKINS_USER`,
+`JENKINS_TOKEN` (an API token of an admin user). The `deploy` job uploads the `.hpi` to
+`/pluginManager/uploadPlugin` and requests `/safeRestart`. Without these secrets the job is skipped.
+To require approval before each deploy, add required reviewers to the `production` environment
+(Settings → Environments).
+
+Recommended: protect `main` (Settings → Branches) and require the two `Build & test` checks.
+
 ---
 
 ## Hướng dẫn nhanh (Tiếng Việt)

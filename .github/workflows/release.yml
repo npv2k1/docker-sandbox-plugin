@@ -1,0 +1,101 @@
+name: Release
+
+# Push a tag like v1.2.3 (or run manually) to:
+#   1. build + test the plugin with that version,
+#   2. publish a GitHub Release with the .hpi attached,
+#   3. optionally install it on your Jenkins (job "deploy", needs secrets, see README).
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.2.3 (tag v<version> is created)'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then v="$INPUT_VERSION"; else v="${GITHUB_REF_NAME#v}"; fi
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Invalid version '$v' (expected 1.2.3 or 1.2.3-rc.1)"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build release (tests + SpotBugs)
+        run: mvn -B -ntp verify -Drevision=${{ steps.version.outputs.version }} -Dchangelist=
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          cp target/docker-sandbox.hpi "docker-sandbox-$VERSION.hpi"
+          sha256sum "docker-sandbox-$VERSION.hpi" > "docker-sandbox-$VERSION.hpi.sha256"
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease";; esac
+          gh release create "$tag" "docker-sandbox-$VERSION.hpi" "docker-sandbox-$VERSION.hpi.sha256" \
+            --target "$GITHUB_SHA" --title "$tag" --generate-notes $prerelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-sandbox-hpi-${{ steps.version.outputs.version }}
+          path: docker-sandbox-*.hpi
+          retention-days: 30
+
+  deploy:
+    name: Deploy to Jenkins
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Add required reviewers on this environment (Settings → Environments) to gate deploys.
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-sandbox-hpi-${{ needs.release.outputs.version }}
+
+      - name: Upload plugin and safe-restart Jenkins
+        env:
+          JENKINS_URL: ${{ secrets.JENKINS_URL }}
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_TOKEN: ${{ secrets.JENKINS_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          if [ -z "$JENKINS_URL" ] || [ -z "$JENKINS_USER" ] || [ -z "$JENKINS_TOKEN" ]; then
+            echo "::notice::JENKINS_URL / JENKINS_USER / JENKINS_TOKEN not set; skipping deploy."
+            exit 0
+          fi
+          url="${JENKINS_URL%/}"
+          curl -fsS -u "$JENKINS_USER:$JENKINS_TOKEN" \
+            -F "file=@docker-sandbox-$VERSION.hpi" "$url/pluginManager/uploadPlugin"
+          curl -fsS -X POST -u "$JENKINS_USER:$JENKINS_TOKEN" "$url/safeRestart"
+          echo "Deployed docker-sandbox $VERSION to $url (safe restart requested)."
