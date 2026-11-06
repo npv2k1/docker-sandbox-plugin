@@ -104,7 +104,7 @@ jobs:
           gh release create "$tag" "docker-sandbox-$VERSION.hpi" "docker-sandbox-$VERSION.hpi.sha256" \
             --target "$GITHUB_SHA" --title "$tag" --generate-notes $prerelease
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docker-sandbox-hpi-${{ steps.version.outputs.version }}
           path: docker-sandbox-*.hpi
