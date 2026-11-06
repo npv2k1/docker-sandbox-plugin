@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+
+# When CI finishes green on a Dependabot PR, merge it into main.
+# Runs from main's copy of this file (workflow_run), never checks out PR code.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Merge the Dependabot PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          pr=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open --json number,author \
+                 --jq '.[] | select(.author.login == "app/dependabot" or .author.login == "dependabot[bot]") | .number' | head -n1)
+          if [ -z "$pr" ]; then echo "No open Dependabot PR for $HEAD_BRANCH"; exit 0; fi
+          # Only merge the exact commit CI just tested.
+          gh pr merge "$pr" --repo "$REPO" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+          echo "Merged #$pr ($HEAD_SHA)"

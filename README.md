@@ -149,6 +149,7 @@ mvn -B -ntp verify
 | `.github/workflows/ci.yml` | push to `main`, every PR | `mvn verify` (tests + SpotBugs) on JDK 17 and 21; uploads the `.hpi` (JDK 21) and test reports on failure |
 | `.github/workflows/release.yml` | tag `vX.Y.Z` or manual run with a version | builds with that version, creates a GitHub Release with `docker-sandbox-X.Y.Z.hpi` + `.sha256`, then runs the `deploy` job |
 | `.github/dependabot.yml` | weekly | dependency PRs for Maven and GitHub Actions |
+| `.github/workflows/dependabot-automerge.yml` | `CI` finished green on a Dependabot PR | merges that PR into `main` (only the exact commit CI tested) and deletes its branch |
 
 Release:
 
