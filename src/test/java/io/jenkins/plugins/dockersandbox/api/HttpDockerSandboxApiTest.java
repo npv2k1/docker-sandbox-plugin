@@ -21,9 +21,11 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import io.jenkins.plugins.dockersandbox.api.model.CreateSandboxRequest;
 import io.jenkins.plugins.dockersandbox.api.model.EndpointCredential;
+import io.jenkins.plugins.dockersandbox.api.model.FeatureOptions;
 import io.jenkins.plugins.dockersandbox.api.model.KitInput;
 import io.jenkins.plugins.dockersandbox.api.model.Resources;
 import io.jenkins.plugins.dockersandbox.api.model.Sandbox;
+import io.jenkins.plugins.dockersandbox.api.model.TimeoutOptions;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -72,7 +74,8 @@ class HttpDockerSandboxApiTest {
                 new Resources(2, 4096L),
                 List.of(KitInput.byRef("shell")),
                 Map.of("A", "b"),
-                Map.of("jenkins-build", "1"));
+                Map.of("jenkins-build", "1"),
+                new FeatureOptions(new TimeoutOptions("3600s", "delete")));
         Sandbox sb = api.createSandbox(req, "key-123");
         assertEquals("sb1", sb.id());
         assertEquals("running", sb.status());
@@ -83,7 +86,8 @@ class HttpDockerSandboxApiTest {
                 .withHeader("Idempotency-Key", equalTo("key-123"))
                 .withRequestBody(equalToJson("{\"displayName\":\"jk-job-1\",\"resources\":{\"cpus\":2,\"memoryMib\":4096},"
                         + "\"kits\":[{\"artifact\":{\"ref\":{\"ref\":\"shell\",\"kind\":\"\"}}}],"
-                        + "\"environment\":{\"A\":\"b\"},\"labels\":{\"jenkins-build\":\"1\"}}")));
+                        + "\"environment\":{\"A\":\"b\"},\"labels\":{\"jenkins-build\":\"1\"},"
+                        + "\"features\":{\"timeouts\":{\"timeout\":\"3600s\",\"onTimeout\":\"delete\"}}}")));
     }
 
     @Test
@@ -171,7 +175,7 @@ class HttpDockerSandboxApiTest {
                 .withBody("{\"code\":\"RESOURCE_EXHAUSTED\",\"message\":\"10 concurrent sandboxes\"}")));
         SandboxApiException e = assertThrows(
                 SandboxApiException.class,
-                () -> api.createSandbox(new CreateSandboxRequest("x", null, null, null, null), "k"));
+                () -> api.createSandbox(new CreateSandboxRequest("x", null, null, null, null, null), "k"));
         assertTrue(e.isQuotaExhausted());
         assertEquals("resourceexhausted", e.getCode());
         docker.verify(1, postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes")));

@@ -14,4 +14,5 @@ public record CreateSandboxRequest(
         Resources resources,
         List<KitInput> kits,
         Map<String, String> environment,
-        Map<String, String> labels) {}
+        Map<String, String> labels,
+        FeatureOptions features) {}
