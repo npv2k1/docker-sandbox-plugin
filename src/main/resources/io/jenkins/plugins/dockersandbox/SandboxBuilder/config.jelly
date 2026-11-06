@@ -1,0 +1,56 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form">
+  <f:entry title="Script" field="script">
+    <f:textarea />
+  </f:entry>
+  <f:entry title="Account" field="account">
+    <f:textbox />
+  </f:entry>
+  <f:entry title="Account labels" field="accountLabel">
+    <f:textbox />
+  </f:entry>
+  <f:entry title="Size" field="size">
+    <f:select />
+  </f:entry>
+  <f:entry title="Upload workspace" field="uploadWorkspace">
+    <f:checkbox default="true" />
+  </f:entry>
+  <f:entry title="Artifacts to copy back" field="artifacts">
+    <f:textbox />
+  </f:entry>
+  <f:entry title="Timeout (minutes, 0 = none)" field="timeoutMinutes">
+    <f:number clazz="non-negative-number" min="0" default="60" />
+  </f:entry>
+  <f:advanced>
+    <f:entry title="Kit" field="kit">
+      <f:textbox />
+    </f:entry>
+    <f:entry title="Sandbox TTL (minutes, 0 = default)" field="ttlMinutes">
+      <f:number clazz="non-negative-number" min="0" default="0" />
+    </f:entry>
+    <f:entry title="Workspace includes" field="includes">
+      <f:textbox default="**/*" />
+    </f:entry>
+    <f:entry title="Workspace excludes" field="excludes">
+      <f:textbox />
+    </f:entry>
+    <f:entry title="Environment variables (NAME=value per line)" field="envText">
+      <f:textarea />
+    </f:entry>
+    <f:entry title="Keep sandbox after the build" field="keepSandbox">
+      <f:checkbox />
+    </f:entry>
+    <f:entry title="Do not fail on non-zero exit (mark unstable)" field="returnStatus">
+      <f:checkbox />
+    </f:entry>
+    <f:entry title="Allow empty artifacts" field="allowEmptyArtifacts">
+      <f:checkbox default="true" />
+    </f:entry>
+    <f:entry title="Work directory in the sandbox" field="workDir">
+      <f:textbox default="/home/agent/workspace" />
+    </f:entry>
+    <f:entry title="Max workspace upload (MB)" field="maxUploadMb">
+      <f:number clazz="positive-number" min="1" default="200" />
+    </f:entry>
+  </f:advanced>
+</j:jelly>
