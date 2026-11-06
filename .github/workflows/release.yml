@@ -1,17 +1,26 @@
 name: Release
 
-# Push a tag like v1.2.3 (or run manually) to:
-#   1. build + test the plugin with that version,
-#   2. publish a GitHub Release with the .hpi attached,
-#   3. optionally install it on your Jenkins (job "deploy", needs secrets, see README).
+# Two ways to release:
+#   - Actions tab > Release > Run workflow: pick bump = patch | minor | major (next version is
+#     computed from the latest vX.Y.Z tag; first release is 1.0.0), or set an exact version.
+#     Must run on main. The tag v<version> is created on the current main commit.
+#   - Or push a tag yourself: git tag v1.2.3 && git push origin v1.2.3
+# Then: build + test with that version, publish a GitHub Release with the .hpi,
+# and optionally install it on your Jenkins (job "deploy", needs secrets, see README).
 on:
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
+      bump:
+        description: 'Version bump from the latest vX.Y.Z tag'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
       version:
-        description: 'Version to release, e.g. 1.2.3 (tag v<version> is created)'
-        required: true
+        description: 'Exact version instead (e.g. 2.0.0 or 2.0.0-rc.1); leave empty to use bump'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -31,17 +40,47 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # all tags, to compute the next version
 
       - name: Resolve version
         id: version
         env:
+          INPUT_BUMP: ${{ inputs.bump }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then v="$INPUT_VERSION"; else v="${GITHUB_REF_NAME#v}"; fi
-          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+          semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Run the release from main (got '$GITHUB_REF_NAME')"; exit 1
+            fi
+            if [ -n "$INPUT_VERSION" ]; then
+              v="${INPUT_VERSION#v}"
+            else
+              latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+              if [ -z "$latest" ]; then
+                v=1.0.0
+              else
+                IFS=. read -r major minor patch <<< "${latest#v}"
+                case "$INPUT_BUMP" in
+                  major) v="$((major + 1)).0.0" ;;
+                  minor) v="$major.$((minor + 1)).0" ;;
+                  *)     v="$major.$minor.$((patch + 1))" ;;
+                esac
+              fi
+              echo "Latest tag: ${latest:-none}; bump: $INPUT_BUMP -> $v"
+            fi
+            if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+              echo "::error::Tag v$v already exists"; exit 1
+            fi
+          else
+            v="${GITHUB_REF_NAME#v}"
+          fi
+          if ! printf '%s' "$v" | grep -Eq "$semver"; then
             echo "::error::Invalid version '$v' (expected 1.2.3 or 1.2.3-rc.1)"; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "### Releasing v$v" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-java@v4
         with:

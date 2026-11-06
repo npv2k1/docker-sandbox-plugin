@@ -147,11 +147,15 @@ mvn -B -ntp verify
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | push to `main`, every PR | `mvn verify` (tests + SpotBugs) on JDK 17 and 21; uploads the `.hpi` (JDK 21) and test reports on failure |
-| `.github/workflows/release.yml` | tag `vX.Y.Z` or manual run with a version | builds with that version, creates a GitHub Release with `docker-sandbox-X.Y.Z.hpi` + `.sha256`, then runs the `deploy` job |
+| `.github/workflows/release.yml` | manual run (patch/minor/major bump) or tag `vX.Y.Z` | builds with that version, creates a GitHub Release with `docker-sandbox-X.Y.Z.hpi` + `.sha256`, then runs the `deploy` job |
 | `.github/dependabot.yml` | weekly | dependency PRs for Maven and GitHub Actions |
 | `.github/workflows/dependabot-automerge.yml` | `CI` finished green on a Dependabot PR | merges that PR into `main` (only the exact commit CI tested) and deletes its branch |
 
-Release:
+Release (recommended): *Actions → Release → Run workflow* on `main`, pick **bump** = `patch` / `minor` / `major`.
+The next version is computed from the latest `vX.Y.Z` tag (first release: `1.0.0`), the tag is created on the current
+`main` commit, and the GitHub Release is published. To force a version, fill **version** (e.g. `2.0.0-rc.1`).
+
+Or push a tag yourself:
 
 ```
 git tag v1.0.0 && git push origin v1.0.0
