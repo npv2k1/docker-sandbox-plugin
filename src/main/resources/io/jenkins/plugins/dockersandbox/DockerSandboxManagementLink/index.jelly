@@ -1,0 +1,57 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:l="/lib/layout" xmlns:f="/lib/form">
+  <l:layout title="Docker Cloud Sandboxes" permission="${app.ADMINISTER}">
+    <l:main-panel>
+      <h1>Docker Cloud Sandboxes</h1>
+      <p>Load-balancing strategy: <b id="strategy">${it.strategyName}</b>.
+        Accounts are configured under <a href="${rootURL}/manage/configure">Manage Jenkins &gt; System</a>.</p>
+      <j:choose>
+        <j:when test="${empty(it.rows)}">
+          <p id="no-accounts">No Docker accounts are configured yet.</p>
+        </j:when>
+        <j:otherwise>
+          <table class="jenkins-table sortable" id="accounts">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Enabled</th>
+                <th>Active / max</th>
+                <th>Labels</th>
+                <th>Cooldown</th>
+                <th>Last error</th>
+                <th>Runs</th>
+                <th>Failures</th>
+                <th>Connection</th>
+              </tr>
+            </thead>
+            <tbody>
+              <j:forEach var="row" items="${it.rows}">
+                <tr class="account-row" data-account="${row.id}">
+                  <td>${row.displayName} <code>(${row.id})</code></td>
+                  <td>${row.enabled ? 'yes' : 'no'}</td>
+                  <td class="usage">${row.active} / ${row.max}</td>
+                  <td>${row.labels}</td>
+                  <td>
+                    <j:choose>
+                      <j:when test="${row.cooldownSeconds gt 0}">${row.cooldownSeconds}s</j:when>
+                      <j:otherwise>-</j:otherwise>
+                    </j:choose>
+                  </td>
+                  <td>${row.lastError}</td>
+                  <td>${row.totalRuns}</td>
+                  <td>${row.totalFailures}</td>
+                  <td>
+                    <div class="last-test">${row.lastTest}</div>
+                    <f:form method="post" action="testConnection?accountId=${row.id}" name="test-${row.id}">
+                      <f:submit value="Test connection" />
+                    </f:form>
+                  </td>
+                </tr>
+              </j:forEach>
+            </tbody>
+          </table>
+        </j:otherwise>
+      </j:choose>
+    </l:main-panel>
+  </l:layout>
+</j:jelly>

@@ -94,6 +94,7 @@ public class SandboxJobRunner {
         timing = t == null ? Timing.defaults() : t;
     }
 
+    public static final String KEEP_LABEL = "jenkins-keep";
     static final String UPLOAD_PATH = "/tmp/jenkins-ws.tgz";
     static final String ARTIFACT_PATH = "/tmp/jenkins-out.tgz";
     private static final String SCRIPT_NAME = ".jenkins-sandbox.sh";
@@ -160,7 +161,7 @@ public class SandboxJobRunner {
                             size.toResources(),
                             kit.isEmpty() ? null : List.of(KitInput.byRef(kit)),
                             null,
-                            labels(run, account),
+                            labels(run, account, spec.isKeepSandbox()),
                             new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", "delete")));
                     created = api.createSandbox(request, UUID.randomUUID().toString());
                 } catch (SandboxApiException e) {
@@ -477,13 +478,16 @@ public class SandboxJobRunner {
     }
 
     /** Labels that tie a sandbox to this Jenkins and build, used by the orphan cleanup. */
-    Map<String, String> labels(Run<?, ?> run, SandboxAccount account) {
+    Map<String, String> labels(Run<?, ?> run, SandboxAccount account, boolean keep) {
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put("jenkins-instance", config.getInstanceId());
         labels.put("jenkins-job", sanitizeLabel(run.getParent().getFullName()));
         labels.put("jenkins-build", String.valueOf(run.getNumber()));
         labels.put("jenkins-run", encodeRunId(run.getExternalizableId()));
         labels.put("jenkins-account", sanitizeLabel(account.getId()));
+        if (keep) {
+            labels.put(KEEP_LABEL, "true"); // sandboxes the user asked to keep are left to their TTL
+        }
         return labels;
     }
 

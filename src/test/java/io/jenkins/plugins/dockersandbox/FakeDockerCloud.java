@@ -63,6 +63,7 @@ final class FakeDockerCloud implements AutoCloseable {
         final AtomicInteger credentials = new AtomicInteger();
         final Map<String, FakeProcess> processes = new ConcurrentHashMap<>();
         volatile boolean deleted;
+        volatile Instant createdAt = Instant.now();
         JsonNode createRequest;
 
         Sandbox(String id, String owner, String displayName, Path root) {
@@ -339,6 +340,7 @@ final class FakeDockerCloud implements AutoCloseable {
             n.putObject("failure").put("code", "internal").put("message", "image pull failed");
         }
         core.put("etag", etag(sb));
+        core.put("createdAt", sb.createdAt.toString());
         ObjectNode labels = core.putObject("labels");
         sb.labels.forEach(labels::put);
         if (running && !failStartup) {
