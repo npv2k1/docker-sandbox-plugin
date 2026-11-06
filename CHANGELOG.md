@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.0.0] - Unreleased
+
+First release. Experimental: the Docker Cloud Sandboxes API is experimental and the plugin has not yet been verified
+against the live service.
+
+### Added
+
+- `sandboxRun` Pipeline step and *Run script in Docker Cloud Sandbox* Freestyle build step: the workspace is uploaded,
+  the script runs with `bash -e` in the sandbox, its output is streamed to the build log and artifacts are copied back.
+- Step result with `exitCode`, `accountId` and `sandboxId`; `returnStatus` option (Freestyle marks the build unstable).
+- Options for account pinning and labels, kit, size (`micro` to `xl`), sandbox TTL, workspace includes/excludes and
+  upload limit, artifacts, environment variables, timeout, work directory and `keepSandbox`.
+- Multi-account pool with a per-account concurrency limit, weight, labels and enable switch.
+- Load-balancing strategies: least loaded, round robin, weighted random, first available.
+- Waiting for free capacity, account cooldown after quota or authentication failures and failover to other accounts.
+- Docker Sandboxes API client with PAT token exchange and caching, bounded retries honoring `Retry-After`, etag-based
+  deletion and short-lived endpoint credentials.
+- Global configuration under *Manage Jenkins > System > Docker Cloud Sandboxes* with defaults, per-account
+  *Test connection* and inline help; configuration symbols `dockerSandbox` and `dockerSandboxAccount`.
+- *Manage Jenkins > Docker Cloud Sandboxes* page with live usage, cooldowns, last errors and connection tests.
+- Periodic orphan cleanup of sandboxes left behind by crashed controllers.
+- Masking of Docker tokens in everything written to the build log.
+- Tests against a stateful WireMock fake of the Docker APIs.
+- GitHub Actions CI (JDK 17 and 21), release workflow producing a GitHub Release with the `.hpi`, optional deployment to
+  a Jenkins instance, Dependabot with auto-merge.
+- Documentation, contributing guide, code of conduct, security policy, issue and pull request templates.
