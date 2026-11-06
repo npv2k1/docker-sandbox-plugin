@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/npv2k1/docker-sandbox-plugin/security/policy
+    about: Please report vulnerabilities privately, never in a public issue.
+  - name: Documentation and troubleshooting
+    url: https://github.com/npv2k1/docker-sandbox-plugin/tree/main/docs
+    about: Installation, configuration, usage and troubleshooting guides.

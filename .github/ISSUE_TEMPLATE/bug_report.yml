@@ -1,0 +1,75 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please check the
+        [troubleshooting guide](https://github.com/npv2k1/docker-sandbox-plugin/blob/main/docs/troubleshooting.md) first.
+        **Do not report security issues here**; see the security policy.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: jenkins-version
+    attributes:
+      label: Jenkins version
+      placeholder: "2.541.1"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: Shown in Manage Jenkins > Plugins > Installed plugins.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: strategy
+    attributes:
+      label: Load-balancing strategy
+      options:
+        - Least loaded
+        - Round robin
+        - Weighted random
+        - First available (priority order)
+    validations:
+      required: true
+  - type: input
+    id: accounts
+    attributes:
+      label: Number of Docker accounts configured
+      placeholder: "2"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / pipeline snippet
+      description: A minimal `sandboxRun` call or job configuration. Remove secrets.
+      render: groovy
+  - type: textarea
+    id: log
+    attributes:
+      label: Console log
+      description: |
+        The relevant part of the build console log (lines starting with `[docker-sandbox]` are the most useful).
+        **Remove all secrets** such as tokens, credentials and internal URLs before pasting.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed all secrets from the logs and snippets above.
+          required: true
+        - label: I searched the existing issues.
+          required: true
