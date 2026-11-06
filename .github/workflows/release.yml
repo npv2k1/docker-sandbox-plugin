@@ -82,7 +82,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "### Releasing v$v" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
