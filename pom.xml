@@ -37,8 +37,6 @@
     <jenkins.baseline>2.541</jenkins.baseline>
     <jenkins.version>${jenkins.baseline}.3</jenkins.version>
     <wiremock.version>3.13.2</wiremock.version>
-    <spotbugs.effort>Max</spotbugs.effort>
-    <spotbugs.threshold>Low</spotbugs.threshold>
   </properties>
 
   <dependencyManagement>

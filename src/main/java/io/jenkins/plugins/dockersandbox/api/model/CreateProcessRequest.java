@@ -1,0 +1,13 @@
+package io.jenkins.plugins.dockersandbox.api.model;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import java.util.List;
+import java.util.Map;
+
+/** Body of {@code POST /v1/processes}. */
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public record CreateProcessRequest(
+        List<String> cmd, Map<String, String> env, String workingDir, String user, String label) {}
