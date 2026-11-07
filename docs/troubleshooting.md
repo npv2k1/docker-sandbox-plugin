@@ -201,3 +201,25 @@ Collect the build console log (remove any secrets), the plugin version and the J
 **Fix.** Configure it in *Manage Jenkins > Plugins > Advanced settings > HTTP Proxy Configuration* (the plugin uses it,
 including no-proxy hosts and proxy credentials), or start Jenkins with `-Dhttps.proxyHost=... -Dhttps.proxyPort=...`.
 Allow `hub.docker.com`, `connect.docker.com` and `*.sbx.sandboxes-cloud.docker.com` (the per-sandbox endpoints).
+
+## Script hangs with no output (tools that read stdin)
+
+**Symptom.** Plugin 2.0.0 and earlier: a command such as `opencode run "..."` never finishes and prints nothing; the
+build runs until `timeoutMinutes`.
+
+**Cause.** The sandbox process API keeps the process's stdin as an open pipe that is never closed, so tools that read
+stdin when it is not a terminal wait forever.
+
+**Fix.** Fixed after 2.0.0: the script now runs with stdin from `/dev/null` (like Jenkins' `sh` step). On 2.0.0, add
+`</dev/null` to such commands, e.g. `opencode run --model ... "$PROMPT" </dev/null`.
+
+## Which provider for an LLM gateway
+
+If a gateway answers `/v1/messages` (Anthropic style) but not `/v1/chat/completions`, use
+`PROVIDER=anthropic-compatible` in the OpenCode example; for OpenAI-style gateways use `openai-compatible`. Check with:
+
+```
+curl -s $BASE_URL/models -H "Authorization: Bearer $KEY"
+curl -s $BASE_URL/messages -H "x-api-key: $KEY" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' \
+  -d '{"model":"<model>","max_tokens":20,"messages":[{"role":"user","content":"ping"}]}'
+```

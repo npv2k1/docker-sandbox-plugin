@@ -7,3 +7,6 @@ work/
 .project
 .settings/
 *.log
+
+# local secrets for live tests (see .env.example)
+.env

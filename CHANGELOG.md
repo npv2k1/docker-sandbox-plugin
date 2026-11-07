@@ -7,7 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Scripts hung forever when a command read stdin (for example `opencode run`): the sandbox process API keeps stdin
+  open. The script now runs with stdin from `/dev/null`. Found with a live OpenCode run.
+
 ### Added
+
+- OpenCode example: `anthropic-compatible` provider for gateways that speak the Anthropic Messages API.
+- `LiveDockerCloudTest` (opt-in, reads credentials from the environment / `.env`) and `.env.example`.
 
 - `examples/round-trip/Jenkinsfile`: full round-trip pipeline (local files → sandbox → edit and test → back to
   Jenkins), executed unchanged by the test suite.

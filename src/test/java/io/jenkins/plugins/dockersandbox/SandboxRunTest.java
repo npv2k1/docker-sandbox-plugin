@@ -128,6 +128,17 @@ class SandboxRunTest {
     }
 
     @Test
+    void scriptStdinIsClosedSoToolsReadingStdinDoNotHang() throws Exception {
+        // the process API keeps stdin open; `opencode run` and friends hung forever before stdin was /dev/null
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        WorkflowRun b = r.buildAndAssertSuccess(pipeline(
+                "node { sandboxRun(script: 'cat; echo stdin-closed-ok', uploadWorkspace: false, workDir: '/work') }"));
+        r.assertLogContains("stdin-closed-ok", b);
+        assertEquals(List.of("bash", "-c", "exec bash -e .jenkins-sandbox.sh </dev/null"), SandboxJobRunner.scriptCommand());
+        assertAllReleased();
+    }
+
+    @Test
     void kitNamesMapToSandboxTemplateImages() {
         assertEquals("docker/sandbox-templates:shell", SandboxJobRunner.kitImageRef("shell"));
         assertEquals("docker/sandbox-templates:claude-code", SandboxJobRunner.kitImageRef("claude-code"));

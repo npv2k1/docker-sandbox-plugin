@@ -252,8 +252,10 @@ public class SandboxJobRunner {
             } finally {
                 Files.deleteIfExists(scriptFile);
             }
+            // stdin from /dev/null (like Jenkins' sh step): the process API keeps stdin as an open pipe that is never
+            // closed, so tools that read stdin (for example `opencode run`) would otherwise wait forever.
             process = endpoint.startProcess(new CreateProcessRequest(
-                    List.of("bash", "-e", SCRIPT_NAME), parseEnv(spec.getEnv()), workDir, null, null));
+                    scriptCommand(), parseEnv(spec.getEnv()), workDir, null, null));
             int exitCode = streamOutput(endpoint, process, logger, spec);
             log(logger, "Script finished with exit code " + exitCode);
             if (workspace != null && !spec.getArtifacts().isEmpty()) {
@@ -446,6 +448,11 @@ public class SandboxJobRunner {
                 ? SandboxRunSpec.DEFAULT_IMAGE_COMMAND
                 : imageCommand;
         return List.of("sh", "-c", command);
+    }
+
+    /** Runs the uploaded script with {@code bash -e} and stdin from {@code /dev/null}. */
+    static List<String> scriptCommand() {
+        return List.of("bash", "-c", "exec bash -e " + SCRIPT_NAME + " </dev/null");
     }
 
     /** Docker's sandbox template images, one per kit (for example {@code shell}). */

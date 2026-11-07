@@ -163,9 +163,9 @@ archived.
 
 | Parameter | Meaning |
 | --- | --- |
-| `PROVIDER` | `dry-run` (default, no model call), `anthropic`, `openai`, `openrouter`, `google`, `openai-compatible` |
+| `PROVIDER` | `dry-run` (default, no model call), `anthropic`, `openai`, `openrouter`, `google`, `openai-compatible`, `anthropic-compatible` |
 | `MODEL` | model id at the provider (`claude-sonnet-4-5`, `gpt-5`, `anthropic/claude-sonnet-4.5` on OpenRouter, ...) |
-| `BASE_URL` | only for `openai-compatible`: any OpenAI-style endpoint (DeepSeek, vLLM, Ollama, LiteLLM, ...) |
+| `BASE_URL` | required for `*-compatible`: base URL incl. `/v1` of any OpenAI-style (`/chat/completions`) or Anthropic-style (`/messages`) endpoint or gateway (DeepSeek, vLLM, Ollama, LiteLLM, ...) |
 | `API_KEY` | password parameter with the key for this build |
 | `API_KEY_CREDENTIALS_ID` | alternative: a Jenkins *Secret text* credential (wins over `API_KEY`) |
 | `PROMPT`, `USE_SCM`, `PULL_BACK`, `TEST_COMMAND` | as in the AI agent example |

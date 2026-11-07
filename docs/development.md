@@ -110,3 +110,16 @@ required reviewers to the `production` environment (*Settings > Environments*).
 
 Protect `main` (*Settings > Branches*) and require the two `Build & test` checks. Maintainers commit to `main` directly;
 external contributions arrive as pull requests from forks.
+
+## Live tests against the real service (opt-in)
+
+`LiveDockerCloudTest` runs the example pipelines against the real Docker Cloud Sandboxes service and, for OpenCode, a
+real model. It is skipped unless credentials are in the environment. Copy `.env.example` to `.env` (git-ignored, never
+commit it) and fill it in, then:
+
+```
+set -a; . ./.env; set +a; mvn -B -ntp test -Dtest=LiveDockerCloudTest
+```
+
+It creates and deletes real sandboxes (billed to the Docker account) and asserts that neither the Docker PAT nor the
+LLM key appears in the build logs.

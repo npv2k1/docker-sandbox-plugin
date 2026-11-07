@@ -13,12 +13,12 @@
 // model; the plugin's test suite runs that mode (ExamplePipelineTest).
 
 properties([parameters([
-    choice(name: 'PROVIDER', choices: ['dry-run', 'anthropic', 'openai', 'openrouter', 'google', 'openai-compatible'],
-           description: 'Model provider for opencode. openai-compatible = any OpenAI-style endpoint (set BASE_URL)'),
+    choice(name: 'PROVIDER', choices: ['dry-run', 'anthropic', 'openai', 'openrouter', 'google', 'openai-compatible', 'anthropic-compatible'],
+           description: 'Model provider for opencode. *-compatible = any OpenAI- or Anthropic-style endpoint/gateway (set BASE_URL)'),
     string(name: 'MODEL', defaultValue: 'claude-sonnet-4-5',
            description: 'Model id at the provider, e.g. claude-sonnet-4-5, gpt-5, anthropic/claude-sonnet-4.5 (OpenRouter), gemini-2.5-pro, qwen3-coder'),
     string(name: 'BASE_URL', defaultValue: '',
-           description: 'Only for openai-compatible: API base URL, e.g. https://api.deepseek.com/v1 or http://my-vllm:8000/v1'),
+           description: 'Required for *-compatible: API base URL incl. /v1, e.g. https://api.deepseek.com/v1, http://my-vllm:8000/v1, https://my-gateway/v1'),
     password(name: 'API_KEY', description: 'API key for this build (not stored in the config or the log)'),
     string(name: 'API_KEY_CREDENTIALS_ID', defaultValue: '',
            description: 'Optional Jenkins "Secret text" credential id; used instead of API_KEY'),
@@ -35,11 +35,13 @@ List opencodeConfig(String provider, String model, String baseUrl) {
     if (!(model ==~ safe)) { error "MODEL contains unsupported characters: ${model}" }
     String providerId = provider == 'dry-run' ? 'anthropic' : provider
     String providerBlock
-    if (providerId == 'openai-compatible') {
-        if (!(baseUrl ==~ ~/https?:\/\/[A-Za-z0-9._:\/@%+-]+/)) { error 'openai-compatible needs a valid BASE_URL' }
+    if (providerId in ['openai-compatible', 'anthropic-compatible']) {
+        if (!(baseUrl ==~ ~/https?:\/\/[A-Za-z0-9._:\/@%+-]+/)) { error "${providerId} needs a valid BASE_URL" }
+        // OpenAI-style (/chat/completions) or Anthropic-style (/messages) endpoint, any model id
+        String sdk = providerId == 'openai-compatible' ? '@ai-sdk/openai-compatible' : '@ai-sdk/anthropic'
         providerBlock = """
     "custom": {
-      "npm": "@ai-sdk/openai-compatible",
+      "npm": "${sdk}",
       "name": "Custom (${baseUrl})",
       "options": { "baseURL": "${baseUrl}", "apiKey": "{env:LLM_API_KEY}" },
       "models": { "${model}": { "name": "${model}" } }
