@@ -17,7 +17,6 @@ import io.jenkins.plugins.dockersandbox.api.model.CreateSandboxRequest;
 import io.jenkins.plugins.dockersandbox.api.model.ExecRequest;
 import io.jenkins.plugins.dockersandbox.api.model.ExecResponse;
 import io.jenkins.plugins.dockersandbox.api.model.FeatureOptions;
-import io.jenkins.plugins.dockersandbox.api.model.KitInput;
 import io.jenkins.plugins.dockersandbox.api.model.Process;
 import io.jenkins.plugins.dockersandbox.api.model.ProcessChunk;
 import io.jenkins.plugins.dockersandbox.api.model.ReadOutputResponse;
@@ -172,15 +171,19 @@ public class SandboxJobRunner {
                     if (image != null) {
                         labels.put("jenkins-image", sanitizeLabel(image));
                     }
+                    // The live API rejects kits given only by name (it requires the kit artifact
+                    // inline), so a kit is launched as its sandbox template image instead, with the
+                    // template's own start command.
+                    String templateRef = image == null && !kit.isEmpty() ? kitImageRef(kit) : null;
                     CreateSandboxRequest request = new CreateSandboxRequest(
                             name,
                             size.toResources(),
-                            kit.isEmpty() ? null : List.of(KitInput.byRef(kit)),
+                            null,
                             null,
                             labels,
                             new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", "delete")),
                             managed ? image : null,
-                            image != null && !managed ? image : null,
+                            image != null && !managed ? image : templateRef,
                             image == null ? null : StartupExecution.rawImageStart(imageStartArgv(spec.getImageCommand())));
                     created = api.createSandbox(request, UUID.randomUUID().toString());
                 } catch (SandboxApiException e) {
@@ -443,6 +446,18 @@ public class SandboxJobRunner {
                 ? SandboxRunSpec.DEFAULT_IMAGE_COMMAND
                 : imageCommand;
         return List.of("sh", "-c", command);
+    }
+
+    /** Docker's sandbox template images, one per kit (for example {@code shell}). */
+    static final String KIT_TEMPLATE_REPOSITORY = "docker/sandbox-templates:";
+
+    /**
+     * Image that launches a kit: a bare kit name such as {@code shell} maps to
+     * {@code docker/sandbox-templates:shell}; a value that already looks like an image reference
+     * (contains {@code /} or {@code :}) is used as is.
+     */
+    static String kitImageRef(String kit) {
+        return kit.contains("/") || kit.contains(":") ? kit : KIT_TEMPLATE_REPOSITORY + kit;
     }
 
     private void execChecked(SandboxEndpointApi endpoint, String what, String... cmd) throws IOException {

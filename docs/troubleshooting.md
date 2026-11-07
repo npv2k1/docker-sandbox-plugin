@@ -3,7 +3,7 @@
 Messages written by the plugin to the build log start with `[docker-sandbox]`. For problems with the Docker side, the
 *Test connection* button (account form or *Manage Jenkins > Docker Cloud Sandboxes*) is the fastest check.
 
-> The Docker Cloud Sandboxes API is experimental and the plugin is not yet verified against the live service, so some
+> The Docker Cloud Sandboxes API is experimental. The core API flow is verified against the live service, but some
 > messages below come from assumptions described in [Architecture](architecture.md#deviations-from-the-spec-and-unverified-assumptions).
 
 ## Authentication failed (HTTP 401/403)
@@ -64,16 +64,16 @@ account is configured, or all remaining ones already failed for this build.
 
 **Fix.** Check ids and labels (case-insensitive, space-separated) in the configuration.
 
-## Kit rejected by the service
+## Kit rejected by the service (fixed after 1.0.0)
 
-**Symptom.** `Creating sandbox on account 'X' failed: HTTP 400 ...` (or another 4xx) mentioning the kit.
+**Symptom.** Plugin 1.0.0: `Creating sandbox on account 'X' failed: HTTP 400 ... kits[0].artifact.source ... required`.
 
-**Cause.** The plugin sends kits as `{"artifact":{"ref":{"ref":"shell","kind":""}}}` and does not send the `inline` field the
-spec lists as required. This is unverified against the live service.
+**Cause.** 1.0.0 sent kits only by name (`{"artifact":{"ref":{"ref":"shell"}}}`). The live API requires the kit
+artifact itself and rejects the request.
 
-**Fix.** Set *Default kit* to empty in *Manage Jenkins > System > Docker Cloud Sandboxes*. Sandboxes are then created
-without a kit. Note that `kit: ''` in a pipeline means "use the global default", so the global setting is the way to
-disable kits. Please report what you see in an issue.
+**Fix.** Upgrade to the next release: kits are now launched as their template image
+(`imageRef: docker/sandbox-templates:<kit>`), verified against the live service. On 1.0.0, work around it by setting
+*Default image* (or the step's `image`) to `docker/sandbox-templates:shell` or any image with `bash` and `tar`.
 
 ## Sandbox failed to start
 
@@ -100,8 +100,8 @@ plugin checks this first and fails with `Image <ref> must provide bash and tar`,
 
 ## Custom image problems
 
-Raw-image sandboxes are **not yet verified against the live Docker service**; the behavior below is what the plugin
-implements, and reports are welcome.
+Raw-image sandboxes were verified against the live service with `ubuntu:24.04` (runs as root, has bash and tar).
+Private registries and minimal images are not verified; reports are welcome.
 
 **Image missing bash or tar.** `Image <ref> must provide bash and tar (alpine: apk add bash tar)`. The plugin probes
 `command -v bash` and `command -v tar` right after the sandbox starts. Use an image that ships both, or derive your own

@@ -16,7 +16,7 @@ Only `script` is required; every other parameter is optional.
 | `script` | `String` | required | Shell script, run as `bash -e .jenkins-sandbox.sh` in `workDir`. Must not be blank |
 | `account` | `String` | `''` | Pin the build to this account id. Empty = let the load balancer choose |
 | `accountLabel` | `String` | `''` | Space-separated labels; the account must carry **all** of them (case-insensitive) |
-| `kit` | `String` | `''` = global default kit (`shell`) | Kit applied to the sandbox. An empty value means "use the global default", not "no kit"; to create sandboxes without a kit, set the global *Default kit* to empty |
+| `kit` | `String` | `''` = global default kit (`shell`) | Sandbox template to start from. A bare name such as `shell` is launched as the image `docker/sandbox-templates:<kit>` (with the template's own start command); a value containing `/` or `:` is used as the image reference as is. An empty value means "use the global default" |
 | `image` | `String` | `''` | Run in a custom Docker image instead of a kit: an OCI reference (`node:22`, `maven:3.9-eclipse-temurin-21`) or a managed image `images/<id>`. Overrides `kit` and the global defaults, and no kit is sent. The image must provide `bash` and `tar`. See [custom images](#custom-docker-images) |
 | `imageCommand` | `String` | `''` = `sleep infinity` | Keep-alive command of the image, run as `sh -c <value>`. Only used with an image |
 | `size` | `String` | `''` = global default size (`small`) | `micro`, `small`, `medium`, `large` or `xl` (case-insensitive); anything else fails the build |
@@ -37,7 +37,9 @@ Only `script` is required; every other parameter is optional.
 
 With `image` (or a global *Default image*) the sandbox is created from that image instead of a kit.
 
-* Precedence: step `image` > step `kit` > global *Default image* > global *Default kit*. In image mode no kit is sent.
+* Precedence: step `image` > step `kit` > global *Default image* > global *Default kit*.
+* Difference to `kit`: an `image` gets the keep-alive start command (`imageCommand`, default `sleep infinity`) and the
+  `bash`/`tar` preflight check; a `kit` template image keeps its own start command.
 * Values starting with `images/` are managed images (sent as `image`); anything else is an OCI reference (sent as
   `imageRef`). The two are never sent together.
 * The plugin sends `startupExecution.rawImage.start.argv = ["sh", "-c", imageCommand]` (`sleep infinity` when

@@ -22,7 +22,7 @@ All code is in the package `io.jenkins.plugins.dockersandbox` (`src/main/java/..
 1. **Validate** the options (non-blank script, workspace available, valid `env` entries, absolute `workDir`, known size).
 2. **Lease** an account from the `AccountPool` using the configured strategy (waits when all matching accounts are
    busy). The lease is released on every path (try-with-resources).
-3. **Create the sandbox** on the management API: display name `jk-<job>-<build>` (max 64 characters), size, optional kit,
+3. **Create the sandbox** on the management API: display name `jk-<job>-<build>` (max 64 characters), size, image (kit template or custom image),
    labels and a lifetime via `features.timeouts` (`<ttl>s`, `onTimeout: delete`). An `Idempotency-Key` header is sent.
    Quota or authentication errors put the account in cooldown and the loop continues with another account.
 4. **Wait** until the sandbox is `running` and has an endpoint URI (polls every 2 s, gives up after 5 minutes, fails
@@ -56,7 +56,7 @@ sequenceDiagram
     P-->>J: lease on account X (waits if all busy)
     J->>A: POST /v2/auth/token (Docker ID + PAT)
     A-->>J: access token
-    J->>M: POST /v1/sandboxes (size, kit, labels, timeout)
+    J->>M: POST /v1/sandboxes (size, imageRef, labels, timeout)
     alt quota exhausted or auth error
         M-->>J: 429 / 401 / 403
         J->>P: markFailure(X), release, lease another account
@@ -119,14 +119,17 @@ original plan and the spec differ, the spec was followed:
 * Error codes are camelCase in the spec (`resourceExhausted`); they are matched case-insensitively and ignoring
   underscores, so `RESOURCE_EXHAUSTED` works too.
 * The sandbox lifetime is requested with `features.timeouts` (`timeout: "3600s"`, `onTimeout: "delete"`).
-* Kits are sent as `{"artifact": {"ref": {"ref": "shell", "kind": ""}}}`. The spec lists an `inline` field as required for
-  `KitArtifactInput`; the plugin does not send one. **Unverified** against the live service. If the service rejects
-  it, set the global *Default kit* to empty (see [Troubleshooting](troubleshooting.md#kit-rejected-by-the-service)).
+* Kits are launched as their template image, `imageRef: docker/sandbox-templates:<kit>`, without `kits` and without a
+  start command. Sending a kit by name only (`kits[].artifact.ref`) is rejected by the live API (HTTP 400,
+  `kits[0].artifact.source` required); see [Troubleshooting](troubleshooting.md#kit-rejected-by-the-service-fixed-after-100).
+* Verified against the live service (Nov 2026): token exchange, list, create (template image and raw `ubuntu:24.04` with
+  `startupExecution`), endpoint credential, exec, file upload/download, process start/output/exit code, delete. The
+  sandbox GET may omit the `ETag` header; the plugin falls back to `core.etag`. `exitCode` is omitted when it is 0.
 * Endpoint credentials use `ttl: "300s"`; permissions are `sandboxesExec`, `sandboxesFilesRead`, `sandboxesFilesWrite`.
 * `networkPolicies` are not sent.
 * The spec has no description of the Docker token exchange. The plugin uses `POST <authUrl>/v2/auth/token`
   (`{"identifier","secret"}` -> `access_token`, falling back to a `token` field) as documented for Docker Hub.
-  **Unverified** against the live Cloud Sandboxes service.
+  Verified against the live service: the token carries scope `sandbox:use`.
 * The account pool belongs to the global configuration instead of being a separate extension; state is keyed by account
   id so it survives configuration saves.
 * The whole project is tested against a stateful fake, never against the live service (see

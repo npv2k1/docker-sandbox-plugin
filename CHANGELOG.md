@@ -13,9 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   *Default image*. Precedence is step image, step kit, global image, global kit. `images/<id>` values are sent as
   `image`, others as `imageRef`, with `startupExecution.rawImage` keeping the sandbox alive. The work directory defaults
   to `/tmp/workspace` in image mode, the image needs `bash` and `tar` (checked after start), and the management page
-  shows the default image. Not yet verified against the live service.
+  shows the default image.
 
-## [1.0.0] - Unreleased
+### Fixed
+
+- Sandbox creation failed on the live service with HTTP 400 (`kits[0].artifact.source` required) because kits were
+  sent by name only. Kits are now launched as their template image (`docker/sandbox-templates:<kit>`, for example
+  `shell`). The whole flow (create, exec, upload, process output, artifacts download, delete) was verified against the
+  live Docker Cloud Sandboxes service, both with the `shell` template and a raw `ubuntu:24.04` image.
+
+## [1.0.0] - 2026-11-07
 
 First release. Experimental: the Docker Cloud Sandboxes API is experimental and the plugin has not yet been verified
 against the live service.

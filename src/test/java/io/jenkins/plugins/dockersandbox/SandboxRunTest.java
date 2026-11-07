@@ -120,8 +120,19 @@ class SandboxRunTest {
         assertEquals("acc-1", sb.labels.get("jenkins-account"));
         assertEquals("1", sb.labels.get("jenkins-build"));
         assertEquals("3600s", sb.createRequest.path("features").path("timeouts").path("timeout").asText());
-        assertEquals("shell", sb.createRequest.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
+        // kits are launched as their template image (the live API rejects kits given only by name)
+        assertEquals("docker/sandbox-templates:shell", sb.createRequest.path("imageRef").asText());
+        assertFalse(sb.createRequest.has("kits"));
+        assertFalse(sb.createRequest.has("startupExecution"));
         assertEquals(2, sb.createRequest.path("resources").path("cpus").asInt());
+    }
+
+    @Test
+    void kitNamesMapToSandboxTemplateImages() {
+        assertEquals("docker/sandbox-templates:shell", SandboxJobRunner.kitImageRef("shell"));
+        assertEquals("docker/sandbox-templates:claude-code", SandboxJobRunner.kitImageRef("claude-code"));
+        assertEquals("myorg/tools:1", SandboxJobRunner.kitImageRef("myorg/tools:1"));
+        assertEquals("ubuntu:24.04", SandboxJobRunner.kitImageRef("ubuntu:24.04"));
     }
 
     @Test
@@ -185,8 +196,8 @@ class SandboxRunTest {
         // step kit beats global image
         r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, kit: 'other', workDir: '/work') }"));
         JsonNode second = cloud.sandbox("sb2").createRequest;
-        assertEquals("other", second.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
-        assertFalse(second.has("imageRef"));
+        assertEquals("docker/sandbox-templates:other", second.path("imageRef").asText());
+        assertFalse(second.has("kits"));
         assertFalse(second.has("startupExecution"));
 
         // step image beats step kit
@@ -199,8 +210,9 @@ class SandboxRunTest {
         config.setDefaultImage("");
         r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, workDir: '/work') }"));
         JsonNode fourth = cloud.sandbox("sb4").createRequest;
-        assertEquals("shell", fourth.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
-        assertFalse(fourth.has("imageRef"));
+        assertEquals("docker/sandbox-templates:shell", fourth.path("imageRef").asText());
+        assertFalse(fourth.has("kits"));
+        assertFalse(fourth.has("startupExecution"));
     }
 
     @Test

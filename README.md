@@ -7,9 +7,10 @@ microVMs), load-balanced across several Docker accounts.
 [![Latest release](https://img.shields.io/github/v/release/npv2k1/docker-sandbox-plugin?display_name=tag&sort=semver)](https://github.com/npv2k1/docker-sandbox-plugin/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/npv2k1/docker-sandbox-plugin)](LICENSE.md)
 
-> **Status: Experimental.** The Docker Cloud Sandboxes API is experimental and this plugin has **not yet been verified
-> against the live service**. It is developed against the published OpenAPI spec and a stateful fake. See
-> [Architecture](docs/architecture.md#deviations-from-the-spec-and-unverified-assumptions) for the exact assumptions.
+> **Status: Experimental.** The Docker Cloud Sandboxes API is experimental. The plugin's API flow (token exchange,
+> create, exec, upload/download, process output, delete) has been verified against the live service; the Jenkins-side
+> end-to-end run with a real account is still being validated. See
+> [Architecture](docs/architecture.md#deviations-from-the-spec-and-unverified-assumptions) for details.
 
 *Tiếng Việt: plugin chạy script build trong Docker Cloud Sandbox, hỗ trợ nhiều tài khoản Docker và tự cân bằng tải
 giữa các tài khoản; xem phần [Hướng dẫn nhanh](#hướng-dẫn-nhanh-tiếng-việt) ở cuối.*
@@ -20,7 +21,7 @@ giữa các tài khoản; xem phần [Hướng dẫn nhanh](#hướng-dẫn-nhan
 * Workspace is uploaded as a `tar.gz` archive (with include/exclude patterns and a size limit); the script runs with
   `bash -e` and its output is streamed live to the build log.
 * Run in a **custom Docker image** (`image: 'maven:3.9-eclipse-temurin-21'`, or a managed `images/<id>`) instead of a
-  kit; not yet verified against the live service.
+  kit.
 * Artifacts (Ant-style globs) are copied back into the Jenkins workspace.
 * **Multiple Docker accounts**, each with its own concurrency limit, weight and labels.
 * Four load-balancing strategies: least loaded, round robin, weighted random, first available.

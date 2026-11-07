@@ -37,8 +37,8 @@ touching the plugin settings.
 | --- | --- | --- | --- |
 | Accounts | `accounts` | none | The Docker accounts, see [account fields](#account-fields). IDs must be unique and non-empty, otherwise the form is rejected |
 | Load-balancing strategy | `strategy` | Least loaded | See [strategies](#load-balancing-strategies) |
-| Default kit | `defaultKit` | `shell` | Kit applied when a build does not set `kit`. Leave empty to send no kit |
-| Default image | `defaultImage` | empty | Docker image (`node:22` or managed `images/<id>`) used when a build sets neither `image` nor `kit`. When set it wins over *Default kit* and no kit is sent. Precedence: step `image` > step `kit` > *Default image* > *Default kit*. The image needs `bash` and `tar`; the keep-alive command is `sleep infinity` unless the build sets `imageCommand`. **Not yet verified against the live service** |
+| Default kit | `defaultKit` | `shell` | Sandbox template used when a build sets neither `image` nor `kit`; `shell` starts `docker/sandbox-templates:shell` (verified against the live service: has bash, tar, gzip, git, curl, user `agent`, `/home/agent/workspace`) |
+| Default image | `defaultImage` | empty | Docker image (`node:22` or managed `images/<id>`) used when a build sets neither `image` nor `kit`. When set it wins over *Default kit* and no kit is sent. Precedence: step `image` > step `kit` > *Default image* > *Default kit*. The image needs `bash` and `tar`; the keep-alive command is `sleep infinity` unless the build sets `imageCommand`. Verified against the live service with `ubuntu:24.04` (create, exec, file upload/download, process output, delete) |
 | Default size | `defaultSize` | `small` | Size when a build does not set `size`: `micro`, `small`, `medium`, `large`, `xl` |
 | Default sandbox TTL (minutes) | `defaultTtlMinutes` | `60` | Sandbox lifetime when a build does not set `ttlMinutes`. Minimum 1 |
 
