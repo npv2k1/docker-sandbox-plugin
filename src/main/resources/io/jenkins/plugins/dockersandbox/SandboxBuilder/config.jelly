@@ -22,6 +22,12 @@
     <f:number clazz="non-negative-number" min="0" default="60" />
   </f:entry>
   <f:advanced>
+    <f:entry title="Docker image" field="image">
+      <f:textbox />
+    </f:entry>
+    <f:entry title="Image keep-alive command" field="imageCommand">
+      <f:textbox />
+    </f:entry>
     <f:entry title="Kit" field="kit">
       <f:textbox />
     </f:entry>
@@ -47,7 +53,7 @@
       <f:checkbox default="true" />
     </f:entry>
     <f:entry title="Work directory in the sandbox" field="workDir">
-      <f:textbox default="/home/agent/workspace" />
+      <f:textbox />
     </f:entry>
     <f:entry title="Max workspace upload (MB)" field="maxUploadMb">
       <f:number clazz="positive-number" min="1" default="200" />

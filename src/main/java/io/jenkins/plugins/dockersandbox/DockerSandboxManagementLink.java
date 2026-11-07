@@ -118,6 +118,14 @@ public class DockerSandboxManagementLink extends ManagementLink {
         return rows;
     }
 
+    public String getDefaultKit() {
+        return DockerSandboxGlobalConfiguration.get().getDefaultKit();
+    }
+
+    public String getDefaultImage() {
+        return DockerSandboxGlobalConfiguration.get().getDefaultImage();
+    }
+
     public String getStrategyName() {
         return DockerSandboxGlobalConfiguration.get().getStrategy().getDisplayName();
     }

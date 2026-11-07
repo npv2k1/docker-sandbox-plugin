@@ -44,6 +44,9 @@ final class FakeDockerCloud implements AutoCloseable {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /** An {@code imageRef} whose sandboxes fail the bash/tar preflight probe. */
+    static final String NO_BASH_IMAGE = "fake/no-bash";
+
     /** Per Docker ID behavior and counters. */
     static final class Account {
         volatile int quota = Integer.MAX_VALUE;
@@ -364,6 +367,16 @@ final class FakeDockerCloud implements AutoCloseable {
             JsonNode req = JSON.readTree(request.getBody());
             List<String> cmd = new ArrayList<>();
             req.path("cmd").forEach(c -> cmd.add(rewrite(c.asText(), sb)));
+            if (NO_BASH_IMAGE.equals(sb.createRequest.path("imageRef").asText())
+                    && String.join(" ", cmd).contains("command -v bash")) {
+                // simulates an image without bash/tar: the plugin's preflight probe fails
+                ObjectNode resp = JSON.createObjectNode();
+                resp.put("exitCode", 1);
+                resp.put("stdout", "");
+                resp.put("stderr", Base64.getEncoder().encodeToString("sh: bash: not found".getBytes(StandardCharsets.UTF_8)));
+                resp.put("incomplete", false);
+                return json(200, resp.toString());
+            }
             Process p = new ProcessBuilder(cmd).directory(sb.root.toFile()).start();
             p.getOutputStream().close();
             ByteArrayOutputStream err = new ByteArrayOutputStream();

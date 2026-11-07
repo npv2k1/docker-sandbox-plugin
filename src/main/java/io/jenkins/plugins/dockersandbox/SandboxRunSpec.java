@@ -8,12 +8,17 @@ import java.util.List;
 public final class SandboxRunSpec {
 
     public static final String DEFAULT_WORK_DIR = "/home/agent/workspace";
+    /** Work directory default in image mode: writable for non-root image users. */
+    public static final String DEFAULT_IMAGE_WORK_DIR = "/tmp/workspace";
+    public static final String DEFAULT_IMAGE_COMMAND = "sleep infinity";
 
     private final String script;
     private String account = "";
     private String accountLabel = "";
     private String kit;
     private String size;
+    private String image;
+    private String imageCommand = "";
     private int ttlMinutes;
     private boolean uploadWorkspace = true;
     private String includes = "**/*";
@@ -24,7 +29,7 @@ public final class SandboxRunSpec {
     private boolean keepSandbox;
     private boolean returnStatus;
     private boolean allowEmptyArtifacts = true;
-    private String workDir = DEFAULT_WORK_DIR;
+    private String workDir;
     private int maxUploadMb = 200;
 
     public SandboxRunSpec(String script) {
@@ -60,6 +65,26 @@ public final class SandboxRunSpec {
 
     public SandboxRunSpec kit(String v) {
         this.kit = v == null || v.isBlank() ? null : v.trim();
+        return this;
+    }
+
+    /** Image reference ({@code node:22} or managed {@code images/<id>}), or null to fall back to kit/global defaults. */
+    public String getImage() {
+        return image;
+    }
+
+    public SandboxRunSpec image(String v) {
+        this.image = v == null || v.isBlank() ? null : v.trim();
+        return this;
+    }
+
+    /** Keep-alive command run as {@code sh -c}; empty means {@code sleep infinity}. */
+    public String getImageCommand() {
+        return imageCommand;
+    }
+
+    public SandboxRunSpec imageCommand(String v) {
+        this.imageCommand = nz(v);
         return this;
     }
 
@@ -165,12 +190,13 @@ public final class SandboxRunSpec {
         return this;
     }
 
+    /** Explicitly chosen work directory, or null when the runner should pick the default for the mode. */
     public String getWorkDir() {
         return workDir;
     }
 
     public SandboxRunSpec workDir(String v) {
-        this.workDir = v == null || v.isBlank() ? DEFAULT_WORK_DIR : v.trim();
+        this.workDir = v == null || v.isBlank() ? null : v.trim();
         return this;
     }
 

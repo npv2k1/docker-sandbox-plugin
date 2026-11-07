@@ -59,6 +59,14 @@ class DockerSandboxManagementLinkTest {
     }
 
     @Test
+    void showsDefaultKitAndImage() throws Exception {
+        config.setDefaultImage("node:22");
+        String text = r.createWebClient().goTo("manage/docker-sandbox").asNormalizedText();
+        assertTrue(text.contains("Default image: node:22"), text);
+        config.setDefaultImage("");
+    }
+
+    @Test
     void showsLiveUsageAndRunsConnectionTest() throws Exception {
         SandboxAccount a1 = account("acc-1", 4);
         SandboxAccount a2 = account("acc-2", 7);

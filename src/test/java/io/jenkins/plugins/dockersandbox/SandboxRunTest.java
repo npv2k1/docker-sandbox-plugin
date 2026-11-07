@@ -9,6 +9,7 @@ import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.CredentialsStore;
 import com.cloudbees.plugins.credentials.domains.Domain;
 import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
+import com.fasterxml.jackson.databind.JsonNode;
 import hudson.model.FreeStyleBuild;
 import hudson.model.FreeStyleProject;
 import hudson.model.Result;
@@ -121,6 +122,112 @@ class SandboxRunTest {
         assertEquals("3600s", sb.createRequest.path("features").path("timeouts").path("timeout").asText());
         assertEquals("shell", sb.createRequest.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
         assertEquals(2, sb.createRequest.path("resources").path("cpus").asInt());
+    }
+
+    @Test
+    void imageRefRunsInRawImageModeWithDefaultWorkDir() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        WorkflowJob job = pipeline("node { sandboxRun(script: 'pwd; echo hi > marker.txt', uploadWorkspace: false,"
+                + " image: 'node:22', imageCommand: 'tail -f /dev/null') }");
+        WorkflowRun b = r.buildAndAssertSuccess(job);
+        r.assertLogContains("/tmp/workspace", b);
+        FakeDockerCloud.Sandbox sb = cloud.sandbox("sb1");
+        assertEquals("node:22", sb.createRequest.path("imageRef").asText());
+        assertFalse(sb.createRequest.has("image"));
+        assertFalse(sb.createRequest.has("kits"));
+        JsonNode argv = sb.createRequest.path("startupExecution").path("rawImage").path("start").path("argv");
+        assertEquals("[\"sh\",\"-c\",\"tail -f /dev/null\"]", argv.toString());
+        assertEquals("node_22", sb.labels.get("jenkins-image"));
+        assertTrue(java.nio.file.Files.isRegularFile(sb.root.resolve("tmp/workspace/marker.txt")));
+        assertAllReleased();
+    }
+
+    @Test
+    void blankImageCommandKeepsSandboxAliveWithSleepInfinity() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, image: 'node:22') }"));
+        JsonNode argv = cloud.sandbox("sb1").createRequest.path("startupExecution").path("rawImage").path("start").path("argv");
+        assertEquals("[\"sh\",\"-c\",\"sleep infinity\"]", argv.toString());
+    }
+
+    @Test
+    void managedImagePrefixGoesIntoImageField() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, image: 'images/abc123') }"));
+        FakeDockerCloud.Sandbox sb = cloud.sandbox("sb1");
+        assertEquals("images/abc123", sb.createRequest.path("image").asText());
+        assertFalse(sb.createRequest.has("imageRef"));
+        assertFalse(sb.createRequest.has("kits"));
+        assertEquals("images_abc123", sb.labels.get("jenkins-image"));
+    }
+
+    @Test
+    void explicitWorkDirWinsInImageMode() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        WorkflowRun b = r.buildAndAssertSuccess(pipeline(
+                "node { sandboxRun(script: 'pwd', uploadWorkspace: false, image: 'node:22', workDir: '/work') }"));
+        r.assertLogContains("/work", b);
+        r.assertLogNotContains("/tmp/workspace", b);
+    }
+
+    @Test
+    void imagePrecedenceStepImageThenStepKitThenGlobalImageThenGlobalKit() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        config.setDefaultKit("shell");
+        config.setDefaultImage("global/image:1");
+
+        // global image beats global kit
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false) }"));
+        JsonNode first = cloud.sandbox("sb1").createRequest;
+        assertEquals("global/image:1", first.path("imageRef").asText());
+        assertFalse(first.has("kits"));
+
+        // step kit beats global image
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, kit: 'other', workDir: '/work') }"));
+        JsonNode second = cloud.sandbox("sb2").createRequest;
+        assertEquals("other", second.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
+        assertFalse(second.has("imageRef"));
+        assertFalse(second.has("startupExecution"));
+
+        // step image beats step kit
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, kit: 'other', image: 'step/image:2') }"));
+        JsonNode third = cloud.sandbox("sb3").createRequest;
+        assertEquals("step/image:2", third.path("imageRef").asText());
+        assertFalse(third.has("kits"));
+
+        // without global image the global kit applies
+        config.setDefaultImage("");
+        r.buildAndAssertSuccess(pipeline("node { sandboxRun(script: 'true', uploadWorkspace: false, workDir: '/work') }"));
+        JsonNode fourth = cloud.sandbox("sb4").createRequest;
+        assertEquals("shell", fourth.path("kits").get(0).path("artifact").path("ref").path("ref").asText());
+        assertFalse(fourth.has("imageRef"));
+    }
+
+    @Test
+    void freestyleBuilderSupportsImage() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        FreeStyleProject p = r.createFreeStyleProject();
+        SandboxBuilder builder = new SandboxBuilder("echo free-image");
+        builder.setUploadWorkspace(false);
+        builder.setImage("node:22");
+        p.getBuildersList().add(builder);
+        FreeStyleBuild b = r.buildAndAssertSuccess(p);
+        r.assertLogContains("free-image", b);
+        assertEquals("node:22", cloud.sandbox("sb1").createRequest.path("imageRef").asText());
+        assertAllReleased();
+    }
+
+    @Test
+    void imageWithoutBashAndTarAbortsAndStillCleansUp() throws Exception {
+        accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
+        WorkflowJob job = pipeline("node { sandboxRun(script: 'echo never-runs', uploadWorkspace: false, image: '"
+                + FakeDockerCloud.NO_BASH_IMAGE + "') }");
+        WorkflowRun b = r.assertBuildStatus(Result.FAILURE, job.scheduleBuild2(0));
+        r.assertLogContains("Image " + FakeDockerCloud.NO_BASH_IMAGE
+                + " must provide bash and tar (alpine: apk add bash tar)", b);
+        r.assertLogNotContains("never-runs", b);
+        assertEquals(List.of("sb1"), cloud.deletedIds());
+        assertAllReleased();
     }
 
     @Test

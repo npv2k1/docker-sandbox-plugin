@@ -15,4 +15,19 @@ public record CreateSandboxRequest(
         List<KitInput> kits,
         Map<String, String> environment,
         Map<String, String> labels,
-        FeatureOptions features) {}
+        FeatureOptions features,
+        String image,
+        String imageRef,
+        StartupExecution startupExecution) {
+
+    /** Kit-mode request (no image). */
+    public CreateSandboxRequest(
+            String displayName,
+            Resources resources,
+            List<KitInput> kits,
+            Map<String, String> environment,
+            Map<String, String> labels,
+            FeatureOptions features) {
+        this(displayName, resources, kits, environment, labels, features, null, null, null);
+    }
+}

@@ -25,6 +25,8 @@ public class SandboxRunStep extends Step {
     private String accountLabel = "";
     private String kit = "";
     private String size = "";
+    private String image = "";
+    private String imageCommand = "";
     private int ttlMinutes = 0;
     private boolean uploadWorkspace = true;
     private String includes = "**/*";
@@ -34,7 +36,7 @@ public class SandboxRunStep extends Step {
     private boolean keepSandbox = false;
     private boolean returnStatus = false;
     private boolean allowEmptyArtifacts = true;
-    private String workDir = SandboxRunSpec.DEFAULT_WORK_DIR;
+    private String workDir = "";
     private int maxUploadMb = 200;
     private List<String> env = new ArrayList<>();
 
@@ -72,6 +74,24 @@ public class SandboxRunStep extends Step {
     @DataBoundSetter
     public void setKit(String kit) {
         this.kit = kit;
+    }
+
+    public String getImage() {
+        return image;
+    }
+
+    @DataBoundSetter
+    public void setImage(String image) {
+        this.image = image;
+    }
+
+    public String getImageCommand() {
+        return imageCommand;
+    }
+
+    @DataBoundSetter
+    public void setImageCommand(String imageCommand) {
+        this.imageCommand = imageCommand;
     }
 
     public String getSize() {
@@ -197,6 +217,8 @@ public class SandboxRunStep extends Step {
                 .accountLabel(accountLabel)
                 .kit(kit)
                 .size(size)
+                .image(image)
+                .imageCommand(imageCommand)
                 .ttlMinutes(ttlMinutes)
                 .uploadWorkspace(uploadWorkspace)
                 .includes(includes)

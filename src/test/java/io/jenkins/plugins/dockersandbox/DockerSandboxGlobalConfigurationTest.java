@@ -59,6 +59,7 @@ class DockerSandboxGlobalConfigurationTest {
         cfg.setAccounts(List.of(a1, a2));
         cfg.setStrategy(LoadBalancingStrategy.ROUND_ROBIN);
         cfg.setDefaultKit("shell");
+        cfg.setDefaultImage("maven:3.9-eclipse-temurin-21");
         cfg.setDefaultSize("medium");
         cfg.setDefaultTtlMinutes(90);
         cfg.setLeaseTimeoutMinutes(12);
@@ -72,6 +73,7 @@ class DockerSandboxGlobalConfigurationTest {
         DockerSandboxGlobalConfiguration after = DockerSandboxGlobalConfiguration.get();
         r.assertEqualDataBoundBeans(List.of(a1, a2), after.getAccounts());
         assertEquals(LoadBalancingStrategy.ROUND_ROBIN, after.getStrategy());
+        assertEquals("maven:3.9-eclipse-temurin-21", after.getDefaultImage());
         assertEquals("medium", after.getDefaultSize());
         assertEquals(90, after.getDefaultTtlMinutes());
         assertEquals(12, after.getLeaseTimeoutMinutes());

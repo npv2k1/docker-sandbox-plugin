@@ -91,6 +91,26 @@ class HttpDockerSandboxApiTest {
     }
 
     @Test
+    void createSandboxWithRawImageSendsImageRefAndStartupExecution() throws Exception {
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes")).willReturn(aResponse().withStatus(201).withHeader("ETag", "\"e1\"").withBody(SANDBOX_JSON)));
+        CreateSandboxRequest req = new CreateSandboxRequest(
+                "jk-job-2",
+                new Resources(2, 4096L),
+                null,
+                null,
+                Map.of("jenkins-image", "node_22"),
+                null,
+                null,
+                "node:22",
+                io.jenkins.plugins.dockersandbox.api.model.StartupExecution.rawImageStart(List.of("sh", "-c", "sleep infinity")));
+        api.createSandbox(req, "key-456");
+        docker.verify(postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes"))
+                .withRequestBody(equalToJson("{\"displayName\":\"jk-job-2\",\"resources\":{\"cpus\":2,\"memoryMib\":4096},"
+                        + "\"labels\":{\"jenkins-image\":\"node_22\"},\"imageRef\":\"node:22\","
+                        + "\"startupExecution\":{\"rawImage\":{\"start\":{\"argv\":[\"sh\",\"-c\",\"sleep infinity\"]}}}}")));
+    }
+
+    @Test
     void getSandboxParsesStatusAndFailure() throws Exception {
         docker.stubFor(get(urlEqualTo("/sandboxes/v1/sandboxes/sb1")).willReturn(aResponse().withBody(
                 "{\"name\":\"sandboxes/sb1\",\"uid\":\"sb1\",\"core\":{\"status\":\"FAILED\"},\"failure\":{\"code\":\"internal\",\"message\":\"boom\"},\"extra\":1}")));

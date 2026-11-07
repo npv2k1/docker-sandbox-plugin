@@ -22,6 +22,7 @@ import io.jenkins.plugins.dockersandbox.api.model.Process;
 import io.jenkins.plugins.dockersandbox.api.model.ProcessChunk;
 import io.jenkins.plugins.dockersandbox.api.model.ReadOutputResponse;
 import io.jenkins.plugins.dockersandbox.api.model.Sandbox;
+import io.jenkins.plugins.dockersandbox.api.model.StartupExecution;
 import io.jenkins.plugins.dockersandbox.api.model.TimeoutOptions;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -95,6 +96,8 @@ public class SandboxJobRunner {
     }
 
     public static final String KEEP_LABEL = "jenkins-keep";
+    static final String PREFLIGHT_COMMAND = "command -v bash >/dev/null && command -v tar >/dev/null";
+    static final String MANAGED_IMAGE_PREFIX = "images/";
     static final String UPLOAD_PATH = "/tmp/jenkins-ws.tgz";
     static final String ARTIFACT_PATH = "/tmp/jenkins-out.tgz";
     private static final String SCRIPT_NAME = ".jenkins-sandbox.sh";
@@ -127,7 +130,15 @@ public class SandboxJobRunner {
         } catch (IllegalArgumentException e) {
             throw new AbortException(e.getMessage());
         }
-        String kit = spec.getKit() != null ? spec.getKit() : config.getDefaultKit();
+        // precedence: step image > step kit > global default image > global default kit
+        String image = spec.getImage();
+        if (image == null && spec.getKit() == null && !config.getDefaultImage().isEmpty()) {
+            image = config.getDefaultImage();
+        }
+        String kit = image != null ? "" : spec.getKit() != null ? spec.getKit() : config.getDefaultKit();
+        String workDir = spec.getWorkDir() != null
+                ? spec.getWorkDir()
+                : image != null ? SandboxRunSpec.DEFAULT_IMAGE_WORK_DIR : SandboxRunSpec.DEFAULT_WORK_DIR;
         int ttl = spec.getTtlMinutes() > 0 ? spec.getTtlMinutes() : config.getDefaultTtlMinutes();
         AccountPool pool = config.getPool();
         Duration cooldown = Duration.ofMinutes(config.getCooldownMinutes());
@@ -156,13 +167,21 @@ public class SandboxJobRunner {
                 String name = displayName(run);
                 try {
                     api = backend.management(account);
+                    Map<String, String> labels = labels(run, account, spec.isKeepSandbox());
+                    boolean managed = image != null && image.startsWith(MANAGED_IMAGE_PREFIX);
+                    if (image != null) {
+                        labels.put("jenkins-image", sanitizeLabel(image));
+                    }
                     CreateSandboxRequest request = new CreateSandboxRequest(
                             name,
                             size.toResources(),
                             kit.isEmpty() ? null : List.of(KitInput.byRef(kit)),
                             null,
-                            labels(run, account, spec.isKeepSandbox()),
-                            new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", "delete")));
+                            labels,
+                            new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", "delete")),
+                            managed ? image : null,
+                            image != null && !managed ? image : null,
+                            image == null ? null : StartupExecution.rawImageStart(imageStartArgv(spec.getImageCommand())));
                     created = api.createSandbox(request, UUID.randomUUID().toString());
                 } catch (SandboxApiException e) {
                     if (!(e.isQuotaExhausted() || e.isAuthError())) {
@@ -183,7 +202,7 @@ public class SandboxJobRunner {
                     log(logger, lastFailure + "; trying another account");
                     continue;
                 }
-                result = runInSandbox(api, created, account, workspace, listener, spec);
+                result = runInSandbox(api, created, account, workspace, listener, spec, workDir, image);
             }
         }
         if (result == null) {
@@ -203,7 +222,9 @@ public class SandboxJobRunner {
             SandboxAccount account,
             FilePath workspace,
             TaskListener listener,
-            SandboxRunSpec spec)
+            SandboxRunSpec spec,
+            String workDir,
+            String image)
             throws IOException, InterruptedException {
         PrintStream logger = listener.getLogger();
         String sandboxId = created.id();
@@ -214,10 +235,12 @@ public class SandboxJobRunner {
             Sandbox ready = waitRunning(api, created);
             log(logger, "Sandbox " + sandboxId + " on account " + account.getId() + " ready");
             endpoint = backend.endpoint(api, ready);
-            String workDir = spec.getWorkDir();
+            if (image != null) {
+                preflightImage(endpoint, image);
+            }
             execChecked(endpoint, "Preparing the work directory", "mkdir", "-p", workDir);
             if (spec.isUploadWorkspace()) {
-                uploadWorkspace(endpoint, workspace, listener, spec);
+                uploadWorkspace(endpoint, workspace, listener, spec, workDir);
             }
             Path scriptFile = Files.createTempFile("jenkins-sandbox-script", ".sh");
             try {
@@ -231,7 +254,7 @@ public class SandboxJobRunner {
             int exitCode = streamOutput(endpoint, process, logger, spec);
             log(logger, "Script finished with exit code " + exitCode);
             if (workspace != null && !spec.getArtifacts().isEmpty()) {
-                fetchArtifacts(endpoint, workspace, listener, spec);
+                fetchArtifacts(endpoint, workspace, listener, spec, workDir);
             }
             return new SandboxRunResult(exitCode, account.getId(), sandboxId);
         } catch (InterruptedException | InterruptedIOException e) {
@@ -290,7 +313,8 @@ public class SandboxJobRunner {
         }
     }
 
-    private void uploadWorkspace(SandboxEndpointApi endpoint, FilePath workspace, TaskListener listener, SandboxRunSpec spec)
+    private void uploadWorkspace(
+            SandboxEndpointApi endpoint, FilePath workspace, TaskListener listener, SandboxRunSpec spec, String workDir)
             throws IOException, InterruptedException {
         PrintStream logger = listener.getLogger();
         Path archive = Files.createTempFile("jenkins-sandbox-ws", ".tgz");
@@ -315,8 +339,8 @@ public class SandboxJobRunner {
                 "Extracting the workspace",
                 "bash",
                 "-c",
-                "mkdir -p " + quote(spec.getWorkDir()) + " && tar -xzf " + UPLOAD_PATH + " -C "
-                        + quote(spec.getWorkDir()) + " && rm -f " + UPLOAD_PATH);
+                "mkdir -p " + quote(workDir) + " && tar -xzf " + UPLOAD_PATH + " -C "
+                        + quote(workDir) + " && rm -f " + UPLOAD_PATH);
     }
 
     private int streamOutput(SandboxEndpointApi endpoint, Process process, PrintStream logger, SandboxRunSpec spec)
@@ -361,7 +385,7 @@ public class SandboxJobRunner {
         }
     }
 
-    private void fetchArtifacts(SandboxEndpointApi endpoint, FilePath workspace, TaskListener listener, SandboxRunSpec spec)
+    private void fetchArtifacts(SandboxEndpointApi endpoint, FilePath workspace, TaskListener listener, SandboxRunSpec spec, String workDir)
             throws IOException, InterruptedException {
         PrintStream logger = listener.getLogger();
         List<String> patterns = new ArrayList<>();
@@ -379,7 +403,7 @@ public class SandboxJobRunner {
         if (patterns.isEmpty()) {
             return;
         }
-        String command = "shopt -s globstar nullglob; cd " + quote(spec.getWorkDir()) + " || exit 2; files=("
+        String command = "shopt -s globstar nullglob; cd " + quote(workDir) + " || exit 2; files=("
                 + String.join(" ", patterns) + "); if [ ${#files[@]} -eq 0 ]; then exit 3; fi; "
                 + "printf '%s\\n' \"${files[@]}\" | tar -czf " + ARTIFACT_PATH + " --no-recursion -T -";
         ExecResponse r = endpoint.exec(ExecRequest.of("bash", "-c", command));
@@ -403,6 +427,22 @@ public class SandboxJobRunner {
         } finally {
             Files.deleteIfExists(download);
         }
+    }
+
+    /** Image mode: the plugin needs bash (to run the script) and tar (to move the workspace). */
+    private void preflightImage(SandboxEndpointApi endpoint, String image) throws IOException {
+        ExecResponse r = endpoint.exec(ExecRequest.of("sh", "-c", PREFLIGHT_COMMAND));
+        if (r.exitCode() != 0) {
+            throw new AbortException(
+                    mask("Image " + image + " must provide bash and tar (alpine: apk add bash tar)"));
+        }
+    }
+
+    static List<String> imageStartArgv(String imageCommand) {
+        String command = imageCommand == null || imageCommand.isBlank()
+                ? SandboxRunSpec.DEFAULT_IMAGE_COMMAND
+                : imageCommand;
+        return List.of("sh", "-c", command);
     }
 
     private void execChecked(SandboxEndpointApi endpoint, String what, String... cmd) throws IOException {
@@ -454,7 +494,7 @@ public class SandboxJobRunner {
                     + "run it inside a node block or set uploadWorkspace=false without artifacts");
         }
         parseEnv(spec.getEnv());
-        if (!spec.getWorkDir().startsWith("/")) {
+        if (spec.getWorkDir() != null && !spec.getWorkDir().startsWith("/")) {
             throw new AbortException("sandboxRun: 'workDir' must be an absolute path");
         }
     }

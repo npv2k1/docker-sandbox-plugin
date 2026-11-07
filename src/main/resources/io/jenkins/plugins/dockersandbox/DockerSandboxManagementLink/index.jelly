@@ -5,6 +5,9 @@
       <h1>Docker Cloud Sandboxes</h1>
       <p>Load-balancing strategy: <b id="strategy">${it.strategyName}</b>.
         Accounts are configured under <a href="${rootURL}/manage/configure">Manage Jenkins &gt; System</a>.</p>
+      <p>Default kit: <b id="default-kit">${empty(it.defaultKit) ? '(none)' : it.defaultKit}</b>.
+        Default image: <b id="default-image">${empty(it.defaultImage) ? '(none)' : it.defaultImage}</b>
+        (a build's image or kit overrides these; an image takes precedence over a kit).</p>
       <j:choose>
         <j:when test="${empty(it.rows)}">
           <p id="no-accounts">No Docker accounts are configured yet.</p>

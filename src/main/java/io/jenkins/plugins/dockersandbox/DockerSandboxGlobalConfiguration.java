@@ -30,6 +30,7 @@ public class DockerSandboxGlobalConfiguration extends GlobalConfiguration {
     private List<SandboxAccount> accounts = new ArrayList<>();
     private LoadBalancingStrategy strategy = LoadBalancingStrategy.LEAST_LOADED;
     private String defaultKit = "shell";
+    private String defaultImage = "";
     private String defaultSize = "small";
     private int defaultTtlMinutes = 60;
     private int leaseTimeoutMinutes = 30;
@@ -116,6 +117,16 @@ public class DockerSandboxGlobalConfiguration extends GlobalConfiguration {
     @DataBoundSetter
     public void setDefaultKit(String defaultKit) {
         this.defaultKit = defaultKit == null ? "" : defaultKit.trim();
+    }
+
+    @NonNull
+    public String getDefaultImage() {
+        return defaultImage == null ? "" : defaultImage;
+    }
+
+    @DataBoundSetter
+    public void setDefaultImage(String defaultImage) {
+        this.defaultImage = defaultImage == null ? "" : defaultImage.trim();
     }
 
     @NonNull
