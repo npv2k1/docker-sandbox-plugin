@@ -55,6 +55,54 @@
           </table>
         </j:otherwise>
       </j:choose>
+      <j:set var="persistent" value="${it.persistent}" />
+      <h2>Persistent sandboxes</h2>
+      <p>Long-lived sandboxes created with <code>sandboxRun(persistent: ...)</code>. Stopped ones keep their data and
+        count toward the stored-sandbox quota of the account; delete the ones you no longer need.</p>
+      <j:if test="${!empty(it.persistentMessage)}">
+        <p id="persistent-message"><b>${it.persistentMessage}</b></p>
+      </j:if>
+      <j:forEach var="err" items="${persistent.errors}">
+        <p class="persistent-error">${err}</p>
+      </j:forEach>
+      <j:choose>
+        <j:when test="${empty(persistent.rows)}">
+          <p id="no-persistent">No persistent sandboxes.</p>
+        </j:when>
+        <j:otherwise>
+          <table class="jenkins-table sortable" id="persistent">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Account</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Sandbox id</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <j:forEach var="p" items="${persistent.rows}">
+                <tr class="persistent-row" data-name="${p.name}">
+                  <td>${p.name}</td>
+                  <td>${p.accountId}</td>
+                  <td class="persistent-status">${p.status}</td>
+                  <td>${p.createdAt}</td>
+                  <td><code>${p.sandboxId}</code></td>
+                  <td>
+                    <f:form method="post" action="stopPersistent?accountId=${p.accountId}&amp;name=${p.name}" name="stop-${p.accountId}-${p.name}">
+                      <f:submit value="Stop" />
+                    </f:form>
+                    <f:form method="post" action="deletePersistent?accountId=${p.accountId}&amp;name=${p.name}" name="delete-${p.accountId}-${p.name}">
+                      <f:submit value="Delete" />
+                    </f:form>
+                  </td>
+                </tr>
+              </j:forEach>
+            </tbody>
+          </table>
+        </j:otherwise>
+      </j:choose>
     </l:main-panel>
   </l:layout>
 </j:jelly>

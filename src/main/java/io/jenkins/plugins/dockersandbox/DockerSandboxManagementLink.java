@@ -8,6 +8,7 @@ import io.jenkins.plugins.dockersandbox.account.AccountApiFactory;
 import io.jenkins.plugins.dockersandbox.account.AccountState;
 import io.jenkins.plugins.dockersandbox.account.SandboxAccount;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import org.kohsuke.stapler.verb.POST;
 public class DockerSandboxManagementLink extends ManagementLink {
 
     private final transient Map<String, String> lastTest = new ConcurrentHashMap<>();
+    private volatile transient String persistentMessage = "";
 
     /** One table row. */
     public static final class Row {
@@ -128,6 +130,73 @@ public class DockerSandboxManagementLink extends ManagementLink {
 
     public String getStrategyName() {
         return DockerSandboxGlobalConfiguration.get().getStrategy().getDisplayName();
+    }
+
+    /** Persistent sandboxes with the accounts that could not be listed. */
+    public static final class PersistentView {
+        private final List<PersistentSandboxes.Row> rows;
+        private final List<String> errors;
+
+        PersistentView(List<PersistentSandboxes.Row> rows, List<String> errors) {
+            this.rows = rows;
+            this.errors = errors;
+        }
+
+        public List<PersistentSandboxes.Row> getRows() {
+            return rows;
+        }
+
+        public List<String> getErrors() {
+            return errors;
+        }
+    }
+
+    /** For Jelly: persistent sandboxes of this Jenkins on all accounts (queries the API on every page view). */
+    public PersistentView getPersistent() {
+        List<String> errors = new ArrayList<>();
+        List<PersistentSandboxes.Row> rows =
+                PersistentSandboxes.list(DockerSandboxGlobalConfiguration.get(), SandboxBackend.DEFAULT, errors);
+        return new PersistentView(rows, errors);
+    }
+
+    public String getPersistentMessage() {
+        return persistentMessage;
+    }
+
+    /** Stops a persistent sandbox (data kept). */
+    @POST
+    public HttpResponse doStopPersistent(
+            @QueryParameter("accountId") @Nullable String accountId, @QueryParameter("name") @Nullable String name)
+            throws IOException {
+        return managePersistent(PersistentSandboxes.Action.STOP, accountId, name);
+    }
+
+    /** Deletes a persistent sandbox and its data. */
+    @POST
+    public HttpResponse doDeletePersistent(
+            @QueryParameter("accountId") @Nullable String accountId, @QueryParameter("name") @Nullable String name)
+            throws IOException {
+        return managePersistent(PersistentSandboxes.Action.DELETE, accountId, name);
+    }
+
+    private HttpResponse managePersistent(PersistentSandboxes.Action action, String accountId, String name)
+            throws IOException {
+        Jenkins.get().checkPermission(Jenkins.ADMINISTER);
+        DockerSandboxGlobalConfiguration config = DockerSandboxGlobalConfiguration.get();
+        String verb = action.name().toLowerCase(java.util.Locale.ROOT);
+        try {
+            // fail at once if a build is inside the sandbox (zero lock wait); never blocks the request thread
+            String result = PersistentSandboxes.manage(
+                    config, SandboxBackend.DEFAULT, name, action, accountId, "Manage Jenkins", Duration.ZERO, m -> {});
+            persistentMessage = "Persistent sandbox '" + name + "': " + verb + " -> " + result;
+        } catch (IOException e) {
+            persistentMessage = "Persistent sandbox '" + name + "': " + verb + " failed: "
+                    + SandboxJobRunner.mask(e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            persistentMessage = "Persistent sandbox '" + name + "': " + verb + " interrupted";
+        }
+        return new HttpRedirect(".");
     }
 
     /** Token exchange + list sandboxes for one account; the outcome is shown in the table afterwards. */
