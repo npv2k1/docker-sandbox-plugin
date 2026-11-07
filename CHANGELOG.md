@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Jenkins), executed unchanged by the test suite.
 - `examples/ai-agent/Jenkinsfile`: AI coding agent (Claude Code, Codex, Gemini, OpenCode, Copilot, Cursor) edits the
   code in a sandbox started from its Docker template, tests run, changed files and a patch are pulled back.
+- `examples/opencode-byo-model/Jenkinsfile`: OpenCode with provider, model, base URL and API key chosen per build; the
+  key is only passed as an environment variable and never written or logged.
 
 ## [2.0.0] - 2026-11-07
 

@@ -1,0 +1,149 @@
+// OpenCode in a Docker Cloud sandbox with provider, model and API key chosen per build.
+//
+//   code in Jenkins -> sandbox from the 'opencode' kit (docker/sandbox-templates:opencode)
+//   -> an opencode config is generated from the build parameters -> `opencode run --model <provider>/<model>`
+//   -> tests -> changed files + patch pulled back into the Jenkins workspace.
+//
+// The API key is never written to a file or the log: the generated config refers to it as {env:LLM_API_KEY}
+// and the value is passed only as an environment variable of the sandbox process.
+// Key source per build: the API_KEY password parameter, or a Jenkins "Secret text" credential id
+// (API_KEY_CREDENTIALS_ID, needs the Credentials Binding plugin). The credential wins if both are set.
+//
+// PROVIDER 'dry-run' (default) generates and prints the config but applies a fixed edit instead of calling a
+// model; the plugin's test suite runs that mode (ExamplePipelineTest).
+
+properties([parameters([
+    choice(name: 'PROVIDER', choices: ['dry-run', 'anthropic', 'openai', 'openrouter', 'google', 'openai-compatible'],
+           description: 'Model provider for opencode. openai-compatible = any OpenAI-style endpoint (set BASE_URL)'),
+    string(name: 'MODEL', defaultValue: 'claude-sonnet-4-5',
+           description: 'Model id at the provider, e.g. claude-sonnet-4-5, gpt-5, anthropic/claude-sonnet-4.5 (OpenRouter), gemini-2.5-pro, qwen3-coder'),
+    string(name: 'BASE_URL', defaultValue: '',
+           description: 'Only for openai-compatible: API base URL, e.g. https://api.deepseek.com/v1 or http://my-vllm:8000/v1'),
+    password(name: 'API_KEY', description: 'API key for this build (not stored in the config or the log)'),
+    string(name: 'API_KEY_CREDENTIALS_ID', defaultValue: '',
+           description: 'Optional Jenkins "Secret text" credential id; used instead of API_KEY'),
+    text(name: 'PROMPT', defaultValue: 'Fix the bug in src/math.sh so that ./test.sh passes. Do not modify test.sh.',
+         description: 'Task for opencode'),
+    booleanParam(name: 'USE_SCM', defaultValue: false, description: 'Use `checkout scm` instead of the generated sample'),
+    string(name: 'PULL_BACK', defaultValue: 'src/**,test.sh', description: 'Files copied back (comma-separated globs)'),
+    string(name: 'TEST_COMMAND', defaultValue: './test.sh', description: 'Run in the sandbox after opencode; empty = skip'),
+])])
+
+/** [config JSON, 'provider/model'] for the chosen provider; the key is only referenced, never embedded. */
+List opencodeConfig(String provider, String model, String baseUrl) {
+    def safe = ~/[A-Za-z0-9._:\/@+-]+/
+    if (!(model ==~ safe)) { error "MODEL contains unsupported characters: ${model}" }
+    String providerId = provider == 'dry-run' ? 'anthropic' : provider
+    String providerBlock
+    if (providerId == 'openai-compatible') {
+        if (!(baseUrl ==~ ~/https?:\/\/[A-Za-z0-9._:\/@%+-]+/)) { error 'openai-compatible needs a valid BASE_URL' }
+        providerBlock = """
+    "custom": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Custom (${baseUrl})",
+      "options": { "baseURL": "${baseUrl}", "apiKey": "{env:LLM_API_KEY}" },
+      "models": { "${model}": { "name": "${model}" } }
+    }"""
+        providerId = 'custom'
+    } else {
+        providerBlock = """
+    "${providerId}": { "options": { "apiKey": "{env:LLM_API_KEY}" } }"""
+    }
+    String modelRef = "${providerId}/${model}"
+    String json = """{
+  "\$schema": "https://opencode.ai/config.json",
+  "model": "${modelRef}",
+  "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" },
+  "provider": {${providerBlock}
+  }
+}
+"""
+    return [json, modelRef]
+}
+
+node {
+    String provider = params.PROVIDER ?: 'dry-run'
+    String model = (params.MODEL ?: 'claude-sonnet-4-5').trim()
+    def generated = opencodeConfig(provider, model, (params.BASE_URL ?: '').trim())
+    String config = generated[0]
+    String modelRef = generated[1]
+
+    stage('Prepare code') {
+        if (params.USE_SCM) {
+            checkout scm
+        } else {
+            deleteDir()
+            writeFile file: 'src/math.sh', text: '''#!/usr/bin/env bash
+# add A B: prints A + B
+add() { local a=$1 b=$2; echo $((a - b)); }
+'''
+            writeFile file: 'test.sh', text: '''#!/usr/bin/env bash
+set -e
+source src/math.sh
+[ "$(add 2 3)" = 5 ] || { echo "FAIL: add 2 3 = $(add 2 3), expected 5"; exit 1; }
+echo "PASS: add 2 3 = 5"
+'''
+        }
+    }
+
+    stage("opencode (${provider}, ${modelRef})") {
+        def run = { String apiKey ->
+            sandboxRun(
+                kit: 'opencode',                      // docker/sandbox-templates:opencode
+                size: 'medium',
+                timeoutMinutes: 30,
+                excludes: '.git/**,node_modules/**,target/**,build/**',
+                env: ["OPENCODE_JENKINS_CONFIG=${config}", "OPENCODE_MODEL=${modelRef}",
+                      "AGENT_PROMPT=${params.PROMPT}", "DRY_RUN=${provider == 'dry-run'}",
+                      "TEST_COMMAND=${params.TEST_COMMAND ?: ''}", "LLM_API_KEY=${apiKey ?: ''}"],
+                script: '''
+                    set -o pipefail
+                    chmod +x test.sh 2>/dev/null || true
+                    git init -q . && git add -A && git -c user.name=jenkins -c user.email=jenkins@localhost commit -qm baseline
+
+                    # per-build opencode config outside the workspace (so it is never pulled back)
+                    export OPENCODE_CONFIG=/tmp/opencode-jenkins.json
+                    printf '%s' "$OPENCODE_JENKINS_CONFIG" > "$OPENCODE_CONFIG"
+                    echo "== opencode config ($OPENCODE_CONFIG):"; cat "$OPENCODE_CONFIG"
+                    echo "== model: $OPENCODE_MODEL, API key provided: $([ -n "$LLM_API_KEY" ] && echo yes || echo no)"
+
+                    if [ "$DRY_RUN" = true ]; then
+                        echo "== dry-run: would run: opencode run --model $OPENCODE_MODEL \\"\\$AGENT_PROMPT\\""
+                        sed -i "s/a - b/a + b/" src/math.sh && echo "dry-run: fixed src/math.sh" | tee agent.log
+                    else
+                        [ -n "$LLM_API_KEY" ] || { echo "No API key: set API_KEY or API_KEY_CREDENTIALS_ID"; exit 2; }
+                        opencode --version || true
+                        opencode run --model "$OPENCODE_MODEL" "$AGENT_PROMPT" 2>&1 | tee agent.log
+                    fi
+                    unset LLM_API_KEY
+
+                    git add -A ':!agent.log'
+                    git diff --cached --stat
+                    git diff --cached > agent.patch
+
+                    if [ -n "$TEST_COMMAND" ]; then
+                        echo "== test: $TEST_COMMAND"
+                        bash -c "$TEST_COMMAND" 2>&1 | tee test.log
+                    fi
+                ''',
+                artifacts: "${params.PULL_BACK ?: 'src/**'},agent.patch,agent.log,test.log"
+            )
+        }
+        if (params.API_KEY_CREDENTIALS_ID) {
+            withCredentials([string(credentialsId: params.API_KEY_CREDENTIALS_ID, variable: 'LLM_KEY')]) {
+                run(LLM_KEY)
+            }
+        } else {
+            run(env.API_KEY)   // password parameter, exposed to the build as an environment variable
+        }
+    }
+
+    stage('Review what came back') {
+        def patch = readFile('agent.patch')
+        echo patch.trim() ? "Changes made by opencode (${modelRef}):\n${patch}" : 'opencode made no changes'
+        if (fileExists('test.log')) {
+            echo "Test output:\n${readFile('test.log')}"
+        }
+        archiveArtifacts artifacts: 'agent.patch,agent.log,test.log', allowEmptyArchive: true
+    }
+}

@@ -13,6 +13,10 @@ import io.jenkins.plugins.dockersandbox.account.SandboxAccount;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import hudson.model.ParametersAction;
+import hudson.model.PasswordParameterValue;
+import hudson.model.Result;
+import hudson.model.StringParameterValue;
 import java.util.List;
 import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
@@ -97,5 +101,36 @@ class ExamplePipelineTest {
         assertTrue(math.contains("a + b"), math);
         assertTrue(b.getArtifactManager().root().child("agent.patch").isFile());
         assertEquals(0, cloud.liveSandboxes(), "sandbox must be deleted");
+    }
+
+    @Test
+    void opencodeExampleBuildsPerRunConfigAndNeverLogsTheKey(JenkinsRule r) throws Exception {
+        setUpCloud(r);
+        WorkflowJob job = r.createProject(WorkflowJob.class);
+        job.setDefinition(new CpsFlowDefinition(Files.readString(Path.of("examples/opencode-byo-model/Jenkinsfile")), true));
+
+        // build 1 defines the parameters (defaults: dry-run, no key)
+        WorkflowRun first = r.buildAndAssertSuccess(job);
+        r.assertLogContains("API key provided: no", first);
+
+        // build 2: per-run model and key
+        String secret = "sk-test-SECRET-1234567890";
+        WorkflowRun b = r.assertBuildStatusSuccess(job.scheduleBuild2(0, new ParametersAction(
+                new StringParameterValue("PROVIDER", "dry-run"),
+                new StringParameterValue("MODEL", "claude-opus-test"),
+                new PasswordParameterValue("API_KEY", secret))));
+        r.assertLogContains("\"model\": \"anthropic/claude-opus-test\"", b);
+        r.assertLogContains("\"apiKey\": \"{env:LLM_API_KEY}\"", b);
+        r.assertLogContains("API key provided: yes", b);
+        r.assertLogContains("PASS: add 2 3 = 5", b);
+        r.assertLogNotContains(secret, b);
+        assertTrue(b.getArtifactManager().root().child("agent.patch").isFile());
+        assertEquals(0, cloud.liveSandboxes(), "sandbox must be deleted");
+
+        // build 3: openai-compatible without BASE_URL is rejected before any sandbox is created
+        WorkflowRun bad = r.assertBuildStatus(Result.FAILURE, job.scheduleBuild2(0, new ParametersAction(
+                new StringParameterValue("PROVIDER", "openai-compatible"),
+                new StringParameterValue("BASE_URL", ""))));
+        r.assertLogContains("openai-compatible needs a valid BASE_URL", bad);
     }
 }

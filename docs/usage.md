@@ -156,6 +156,27 @@ archived.
   against the live service.
 
 
+### OpenCode with provider, model and API key chosen per build
+
+[`examples/opencode-byo-model/Jenkinsfile`](../examples/opencode-byo-model/Jenkinsfile) runs `opencode` from the
+`opencode` kit and generates its config from the build parameters on every run:
+
+| Parameter | Meaning |
+| --- | --- |
+| `PROVIDER` | `dry-run` (default, no model call), `anthropic`, `openai`, `openrouter`, `google`, `openai-compatible` |
+| `MODEL` | model id at the provider (`claude-sonnet-4-5`, `gpt-5`, `anthropic/claude-sonnet-4.5` on OpenRouter, ...) |
+| `BASE_URL` | only for `openai-compatible`: any OpenAI-style endpoint (DeepSeek, vLLM, Ollama, LiteLLM, ...) |
+| `API_KEY` | password parameter with the key for this build |
+| `API_KEY_CREDENTIALS_ID` | alternative: a Jenkins *Secret text* credential (wins over `API_KEY`) |
+| `PROMPT`, `USE_SCM`, `PULL_BACK`, `TEST_COMMAND` | as in the AI agent example |
+
+* The generated config (`/tmp/opencode-jenkins.json` in the sandbox, used via `OPENCODE_CONFIG`) references the key as
+  `{env:LLM_API_KEY}`; the value is only an environment variable of the sandbox process. It is not written to a file,
+  not printed, and the test suite asserts it never appears in the build log.
+* The config lives outside the work directory, so it is never pulled back by `PULL_BACK`.
+* Verified in the test suite: config generation, key handling, upload/edit/test/pull-back (`dry-run`), and rejection of
+  `openai-compatible` without `BASE_URL`. Not yet run against the live service with a real model.
+
 ### Node build with artifacts
 
 ```groovy
