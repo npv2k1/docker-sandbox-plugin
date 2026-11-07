@@ -7,7 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-11-07
+## [2.0.0] - 2026-11-07
+
+Bug-fix release. Published as 2.0.0 instead of 1.0.1 because of a release-workflow bug (fixed); there are no
+breaking changes compared to 1.0.0.
 
 ### Fixed
 
