@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-07
+
 ### Fixed
 
 - Scripts hung forever when a command read stdin (for example `opencode run`): the sandbox process API keeps stdin
