@@ -113,6 +113,21 @@ Under **Advanced**:
 
 ## Examples
 
+### Full round trip: local files → sandbox → edit and test → back to Jenkins
+
+[`examples/round-trip/Jenkinsfile`](../examples/round-trip/Jenkinsfile) is a complete, runnable pipeline (the test
+suite executes it unchanged, see `ExamplePipelineTest`):
+
+1. creates `app/greet.sh`, `app/config.properties` and `notes/ignored.txt` in the Jenkins workspace,
+2. uploads only `app/**` to the sandbox (`includes` / `excludes`),
+3. edits both files inside the sandbox (`sed`) and adds a line,
+4. runs a test against the edited files and writes `report/test-report.txt`; a failing test fails the build,
+5. copies `app/**` and `report/**` back (`artifacts`, overwriting the local originals), checks the content in Jenkins
+   with `readFile` and archives them.
+
+Copy it into a Pipeline job (*Pipeline script*) or point a job at it with *Pipeline script from SCM*.
+
+
 ### Node build with artifacts
 
 ```groovy

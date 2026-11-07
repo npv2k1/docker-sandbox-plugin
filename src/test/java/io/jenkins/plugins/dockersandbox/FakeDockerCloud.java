@@ -518,9 +518,13 @@ final class FakeDockerCloud implements AutoCloseable {
         return p;
     }
 
-    /** Maps the absolute sandbox paths the plugin uses ({@code /tmp}, {@code /work}) into the sandbox directory. */
+    /**
+     * Maps the absolute sandbox paths the plugin uses ({@code /tmp}, {@code /work}, and {@code /home}, which holds the
+     * default kit work directory {@code /home/agent/workspace}) into the sandbox directory, so commands never touch
+     * the real host paths.
+     */
     private static String rewrite(String s, Sandbox sb) {
-        return s.replaceAll("(?<![\\w.])/(tmp|work)(?=[/'\"\\s]|$)", Matcher.quoteReplacement(sb.root.toString()) + "/$1");
+        return s.replaceAll("(?<![\\w.])/(tmp|work|home)(?=[/'\"\\s]|$)", Matcher.quoteReplacement(sb.root.toString()) + "/$1");
     }
 
     private static String query(URI uri, String name, String fallback) {

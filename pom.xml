@@ -95,6 +95,12 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <!-- `stage` step, used by the example Jenkinsfiles run in ExamplePipelineTest -->
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>pipeline-stage-step</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.wiremock</groupId>
       <artifactId>wiremock-standalone</artifactId>
       <version>${wiremock.version}</version>

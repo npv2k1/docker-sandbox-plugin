@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `examples/round-trip/Jenkinsfile`: full round-trip pipeline (local files → sandbox → edit and test → back to
+  Jenkins), executed unchanged by the test suite.
+
 ## [2.0.0] - 2026-11-07
 
 Bug-fix release. Published as 2.0.0 instead of 1.0.1 because of a release-workflow bug (fixed); there are no

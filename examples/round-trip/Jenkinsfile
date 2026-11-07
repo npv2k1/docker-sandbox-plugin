@@ -1,0 +1,73 @@
+// Round trip: create files in Jenkins -> copy them into a Docker Cloud sandbox -> modify them
+// and run a test there -> copy the results back to the Jenkins workspace -> check and archive them.
+//
+// Requirements: the docker-sandbox plugin with at least one account configured
+// (Manage Jenkins > System > Docker Cloud Sandboxes). Uses only core steps, so it runs on any node.
+// This exact file is executed by the plugin's test suite (ExamplePipelineTest).
+
+node {
+    stage('1. Create files locally') {
+        deleteDir()   // start from an empty workspace
+        writeFile file: 'app/greet.sh', text: '''#!/usr/bin/env bash
+name="${1:-world}"
+echo "Hello, ${name}!"
+'''
+        writeFile file: 'app/config.properties', text: 'version=1\ngreeting=Hello\n'
+        writeFile file: 'notes/ignored.txt', text: 'not needed in the sandbox\n'
+        echo "Local config before:\n${readFile('app/config.properties')}"
+    }
+
+    stage('2-4. Copy into the sandbox, modify, test, copy back') {
+        def result = sandboxRun(
+            // 2. copy: the workspace is uploaded (only app/**; notes/** is excluded)
+            uploadWorkspace: true,
+            includes: 'app/**',
+            excludes: 'notes/**',
+            // optional: image: 'ubuntu:24.04',     // run in a custom image instead of the default kit
+            env: ['RELEASE_NAME=round-trip'],
+            timeoutMinutes: 10,
+            script: '''
+                echo "== sandbox: $(uname -sm), user $(id -un), dir $(pwd)"
+                ls -R app
+
+                # 3. modify the files inside the sandbox
+                sed -i 's/^version=.*/version=2/' app/config.properties
+                echo "edited_by=sandbox" >> app/config.properties
+                sed -i 's/Hello/Xin chao/' app/greet.sh
+
+                # 4. run a test against the modified files
+                mkdir -p report
+                out="$(bash app/greet.sh "$RELEASE_NAME")"
+                echo "greet.sh says: $out"
+                if [ "$out" = "Xin chao, round-trip!" ]; then status=PASS; else status=FAIL; fi
+                {
+                  echo "status=$status"
+                  echo "output=$out"
+                  echo "date=$(date -u +%FT%TZ)"
+                } > report/test-report.txt
+                cat report/test-report.txt
+                [ "$status" = PASS ]   # a non-zero exit fails the build
+            ''',
+            // 5. copy back: these paths (relative to the sandbox work dir) overwrite/land in the workspace
+            artifacts: 'app/**,report/**'
+        )
+        echo "sandbox ${result.sandboxId} on account ${result.accountId} exited with ${result.exitCode}"
+    }
+
+    stage('5. Check the files pulled back') {
+        def config = readFile('app/config.properties')
+        def report = readFile('report/test-report.txt')
+        echo "Local config after:\n${config}"
+        echo "Test report:\n${report}"
+        if (!config.contains('version=2') || !config.contains('edited_by=sandbox')) {
+            error 'app/config.properties was not updated from the sandbox'
+        }
+        if (!readFile('app/greet.sh').contains('Xin chao')) {
+            error 'app/greet.sh was not updated from the sandbox'
+        }
+        if (!report.contains('status=PASS')) {
+            error 'sandbox test did not pass'
+        }
+        archiveArtifacts artifacts: 'app/**,report/**', fingerprint: true
+    }
+}
