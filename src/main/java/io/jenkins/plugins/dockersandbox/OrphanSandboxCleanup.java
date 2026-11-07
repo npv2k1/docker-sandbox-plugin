@@ -18,7 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Deletes sandboxes that this Jenkins created for builds that are over (or gone), e.g. after a controller crash.
- * Only sandboxes labelled with this instance's id and older than a grace period are touched.
+ * Only sandboxes labelled with this instance's id and older than a grace period are touched; persistent sandboxes
+ * (label {@code jenkins-persistent}) and kept ones are never touched.
  */
 @Extension
 public class OrphanSandboxCleanup extends AsyncPeriodicWork {
@@ -77,7 +78,9 @@ public class OrphanSandboxCleanup extends AsyncPeriodicWork {
             return false;
         }
         Map<String, String> labels = sandbox.core().labels();
-        if (!instanceId.equals(labels.get("jenkins-instance")) || labels.containsKey(SandboxJobRunner.KEEP_LABEL)) {
+        if (!instanceId.equals(labels.get("jenkins-instance"))
+                || labels.containsKey(SandboxJobRunner.KEEP_LABEL)
+                || labels.containsKey(PersistentSandboxes.LABEL)) { // long-lived by design, never an orphan
             return false;
         }
         String encoded = labels.get("jenkins-run");

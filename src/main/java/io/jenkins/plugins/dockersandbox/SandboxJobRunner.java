@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -123,6 +124,8 @@ public class SandboxJobRunner {
     public SandboxRunResult run(Run<?, ?> run, FilePath workspace, TaskListener listener, SandboxRunSpec spec)
             throws IOException, InterruptedException {
         validate(spec, workspace);
+        String afterRun = effectiveAfterRun(spec);
+        String persistent = spec.getPersistent();
         SandboxSize size;
         try {
             size = SandboxSize.parse(spec.getSize() != null ? spec.getSize() : config.getDefaultSize());
@@ -148,64 +151,89 @@ public class SandboxJobRunner {
         Set<String> tried = new HashSet<>();
         String lastFailure = null;
         SandboxRunResult result = null;
-        for (int attempt = 1; attempt <= config.getMaxFailoverAttempts() && result == null; attempt++) {
-            AccountPool.Lease lease;
-            try {
-                lease = pool.lease(selector.excluding(tried), config.getStrategy(), leaseTimeout, m -> log(logger, m));
-            } catch (AbortException e) {
-                if (tried.isEmpty()) {
-                    throw e;
-                }
-                throw new AbortException(
-                        "No Docker sandbox account left to fail over to (last error: " + lastFailure + ")");
+        PersistentSandboxes.Entry existing = null;
+        PersistentSandboxLocks.Hold hold = null;
+        try {
+            if (!persistent.isEmpty()) {
+                // one build at a time inside a persistent sandbox; released in the finally below on every path
+                hold = PersistentSandboxLocks.acquire(
+                        PersistentSandboxLocks.key(config.getInstanceId(), persistent),
+                        persistent,
+                        run.getExternalizableId(),
+                        leaseTimeout,
+                        m -> log(logger, m));
+                existing = PersistentSandboxes.find(config, backend, selector, persistent, m -> log(logger, m));
             }
-            try (AccountPool.Lease held = lease) {
-                SandboxAccount account = held.getAccount();
-                DockerSandboxApi api;
-                Sandbox created;
-                String name = displayName(run);
+            if (existing != null) {
+                result = runExisting(existing, workspace, listener, spec, workDir, image, persistent, afterRun);
+            }
+            for (int attempt = 1; attempt <= config.getMaxFailoverAttempts() && result == null; attempt++) {
+                AccountPool.Lease lease;
                 try {
-                    api = backend.management(account);
-                    Map<String, String> labels = labels(run, account, spec.isKeepSandbox());
-                    boolean managed = image != null && image.startsWith(MANAGED_IMAGE_PREFIX);
-                    if (image != null) {
-                        labels.put("jenkins-image", sanitizeLabel(image));
-                    }
-                    // The live API rejects kits given only by name (it requires the kit artifact
-                    // inline), so a kit is launched as its sandbox template image instead, with the
-                    // template's own start command.
-                    String templateRef = image == null && !kit.isEmpty() ? kitImageRef(kit) : null;
-                    CreateSandboxRequest request = new CreateSandboxRequest(
-                            name,
-                            size.toResources(),
-                            null,
-                            null,
-                            labels,
-                            new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", "delete")),
-                            managed ? image : null,
-                            image != null && !managed ? image : templateRef,
-                            image == null ? null : StartupExecution.rawImageStart(imageStartArgv(spec.getImageCommand())));
-                    created = api.createSandbox(request, UUID.randomUUID().toString());
-                } catch (SandboxApiException e) {
-                    if (!(e.isQuotaExhausted() || e.isAuthError())) {
-                        throw new AbortException(
-                                "Creating sandbox on account '" + account.getId() + "' failed: " + mask(e.getMessage()));
-                    }
-                    lastFailure = mask(e.getMessage());
-                    pool.markFailure(account, e, cooldown);
-                    tried.add(account.getId());
-                    log(logger, "Account '" + account.getId() + "' cannot create a sandbox (" + lastFailure
-                            + "); trying another account");
-                    continue;
+                    lease = pool.lease(selector.excluding(tried), config.getStrategy(), leaseTimeout, m -> log(logger, m));
                 } catch (AbortException e) {
-                    // typically missing credentials: a configuration problem of this account only
-                    lastFailure = mask(e.getMessage());
-                    pool.markFailure(account, e, cooldown);
-                    tried.add(account.getId());
-                    log(logger, lastFailure + "; trying another account");
-                    continue;
+                    if (tried.isEmpty()) {
+                        throw e;
+                    }
+                    throw new AbortException(
+                            "No Docker sandbox account left to fail over to (last error: " + lastFailure + ")");
                 }
-                result = runInSandbox(api, created, account, workspace, listener, spec, workDir, image);
+                try (AccountPool.Lease held = lease) {
+                    SandboxAccount account = held.getAccount();
+                    DockerSandboxApi api;
+                    Sandbox created;
+                    String name = persistent.isEmpty() ? displayName(run) : PersistentSandboxes.displayName(persistent);
+                    try {
+                        api = backend.management(account);
+                        Map<String, String> labels = labels(run, account, persistent.isEmpty() && "keep".equals(afterRun));
+                        if (!persistent.isEmpty()) {
+                            labels.put(PersistentSandboxes.LABEL, persistent);
+                        }
+                        boolean managed = image != null && image.startsWith(MANAGED_IMAGE_PREFIX);
+                        if (image != null) {
+                            labels.put("jenkins-image", sanitizeLabel(image));
+                        }
+                        // The live API rejects kits given only by name (it requires the kit artifact
+                        // inline), so a kit is launched as its sandbox template image instead, with the
+                        // template's own start command.
+                        String templateRef = image == null && !kit.isEmpty() ? kitImageRef(kit) : null;
+                        CreateSandboxRequest request = new CreateSandboxRequest(
+                                name,
+                                size.toResources(),
+                                null,
+                                null,
+                                labels,
+                                new FeatureOptions(new TimeoutOptions(ttl * 60 + "s", persistent.isEmpty() ? "delete" : "stop")),
+                                managed ? image : null,
+                                image != null && !managed ? image : templateRef,
+                                image == null ? null : StartupExecution.rawImageStart(imageStartArgv(spec.getImageCommand())));
+                        created = api.createSandbox(request, UUID.randomUUID().toString());
+                    } catch (SandboxApiException e) {
+                        if (!(e.isQuotaExhausted() || e.isAuthError())) {
+                            throw new AbortException(
+                                    "Creating sandbox on account '" + account.getId() + "' failed: " + mask(e.getMessage()));
+                        }
+                        lastFailure = mask(e.getMessage());
+                        pool.markFailure(account, e, cooldown);
+                        tried.add(account.getId());
+                        log(logger, "Account '" + account.getId() + "' cannot create a sandbox (" + lastFailure
+                                + "); trying another account");
+                        continue;
+                    } catch (AbortException e) {
+                        // typically missing credentials: a configuration problem of this account only
+                        lastFailure = mask(e.getMessage());
+                        pool.markFailure(account, e, cooldown);
+                        tried.add(account.getId());
+                        log(logger, lastFailure + "; trying another account");
+                        continue;
+                    }
+                    result = runInSandbox(
+                            api, created, account, workspace, listener, spec, workDir, image, persistent, false, afterRun);
+                }
+            }
+        } finally {
+            if (hold != null) {
+                hold.close();
             }
         }
         if (result == null) {
@@ -227,17 +255,29 @@ public class SandboxJobRunner {
             TaskListener listener,
             SandboxRunSpec spec,
             String workDir,
-            String image)
+            String image,
+            String persistent,
+            boolean reused,
+            String afterRun)
             throws IOException, InterruptedException {
         PrintStream logger = listener.getLogger();
         String sandboxId = created.id();
         SandboxEndpointApi endpoint = null;
         Process process = null;
-        log(logger, "Created sandbox " + sandboxId + " on account '" + account.getId() + "', waiting for it to start");
+        boolean ready = false;
+        if (!reused) {
+            log(logger, "Created " + (persistent.isEmpty() ? "" : "persistent ") + "sandbox "
+                    + (persistent.isEmpty() ? "" : PersistentSandboxes.displayName(persistent) + " (")
+                    + sandboxId + (persistent.isEmpty() ? "" : ")")
+                    + " on account '" + account.getId() + "', waiting for it to start");
+        }
         try {
-            Sandbox ready = waitRunning(api, created);
+            Sandbox running = reused
+                    ? ensureRunning(api, created, m -> log(logger, m), persistentHint(persistent))
+                    : waitRunning(api, created);
+            ready = true;
             log(logger, "Sandbox " + sandboxId + " on account " + account.getId() + " ready");
-            endpoint = backend.endpoint(api, ready);
+            endpoint = backend.endpoint(api, running);
             if (image != null) {
                 preflightImage(endpoint, image);
             }
@@ -261,7 +301,7 @@ public class SandboxJobRunner {
             if (workspace != null && !spec.getArtifacts().isEmpty()) {
                 fetchArtifacts(endpoint, workspace, listener, spec, workDir);
             }
-            return new SandboxRunResult(exitCode, account.getId(), sandboxId);
+            return new SandboxRunResult(exitCode, account.getId(), sandboxId, persistent);
         } catch (InterruptedException | InterruptedIOException e) {
             boolean wasFlagged = Thread.interrupted();
             try {
@@ -281,17 +321,172 @@ public class SandboxJobRunner {
         } finally {
             boolean wasFlagged = Thread.interrupted();
             try {
-                if (spec.isKeepSandbox()) {
-                    log(logger, "Keeping sandbox " + sandboxId + " (keepSandbox=true); it expires with its TTL");
-                } else {
-                    deleteQuietly(api, sandboxId, logger);
-                }
+                finishSandbox(api, sandboxId, persistent, afterRun, ready, reused, logger);
             } finally {
                 if (wasFlagged) {
                     Thread.currentThread().interrupt();
                 }
             }
         }
+    }
+
+    /** Resumes a sandbox that already exists (persistent reuse): the lease is taken on the account that holds it. */
+    private SandboxRunResult runExisting(
+            PersistentSandboxes.Entry existing,
+            FilePath workspace,
+            TaskListener listener,
+            SandboxRunSpec spec,
+            String workDir,
+            String image,
+            String persistent,
+            String afterRun)
+            throws IOException, InterruptedException {
+        PrintStream logger = listener.getLogger();
+        SandboxAccount account = existing.account();
+        Duration leaseTimeout = Duration.ofMinutes(config.getLeaseTimeoutMinutes());
+        try (AccountPool.Lease ignored = config.getPool()
+                .lease(AccountSelector.of(account.getId(), ""), config.getStrategy(), leaseTimeout, m -> log(logger, m))) {
+            DockerSandboxApi api = backend.management(account);
+            Sandbox sandbox;
+            try {
+                sandbox = api.getSandbox(existing.sandbox().id());
+            } catch (SandboxApiException e) {
+                throw new AbortException("Looking up persistent sandbox '" + persistent + "' failed: " + mask(e.getMessage()));
+            }
+            String status = sandbox.status();
+            String next = Sandbox.RUNNING.equals(status)
+                    ? "using it"
+                    : "stopped".equals(status)
+                            ? "starting"
+                            : "stopping".equals(status) ? "waiting for it to stop, then starting" : "waiting";
+            log(logger, "Reusing persistent sandbox " + PersistentSandboxes.displayName(persistent) + " ("
+                    + sandbox.id() + ") on account " + account.getId() + ", status " + status + " -> " + next);
+            return runInSandbox(api, sandbox, account, workspace, listener, spec, workDir, image, persistent, true, afterRun);
+        }
+    }
+
+    private static String persistentHint(String persistent) {
+        return persistent.isEmpty()
+                ? ""
+                : " Delete it with sandboxManage(name: '" + persistent + "', action: 'delete') or on Manage Jenkins > "
+                        + "Docker Cloud Sandboxes; the next build then creates a fresh one.";
+    }
+
+    /**
+     * Brings an existing sandbox to {@code running}: waits while it is stopping, starts it once it is stopped and
+     * waits for the endpoint. A failed sandbox aborts with its failure message.
+     */
+    static Sandbox ensureRunning(DockerSandboxApi api, Sandbox initial, Consumer<String> log, String failureHint)
+            throws IOException, InterruptedException {
+        Timing t = timing;
+        long deadline = System.nanoTime() + t.createTimeout.toNanos();
+        Sandbox sb = initial;
+        boolean startSent = false;
+        while (true) {
+            String status = sb.status();
+            if (Sandbox.RUNNING.equals(status) && sb.endpointUri() != null) {
+                return sb;
+            }
+            if (Sandbox.FAILED.equals(status)) {
+                String reason = sb.failure() != null && sb.failure().message() != null ? sb.failure().message() : "unknown";
+                throw new AbortException(
+                        "Sandbox " + sb.id() + " is in failed state: " + mask(reason) + "." + failureHint);
+            }
+            if ("deleting".equals(status)) {
+                throw new AbortException("Sandbox " + sb.id() + " is being deleted");
+            }
+            if ("stopped".equals(status) && !startSent) {
+                try {
+                    api.startSandbox(sb.id());
+                } catch (SandboxApiException e) {
+                    throw new AbortException("Starting sandbox " + sb.id() + " failed: " + mask(e.getMessage()));
+                }
+                startSent = true;
+                log.accept("Starting sandbox " + sb.id() + " (it was stopped)");
+            }
+            if (System.nanoTime() - deadline > 0) {
+                throw new AbortException(
+                        "Timed out waiting for sandbox " + sb.id() + " to become running (status '" + status + "')");
+            }
+            Thread.sleep(t.createPoll.toMillis());
+            sb = api.getSandbox(sb.id());
+        }
+    }
+
+    /**
+     * What happens to the sandbox when the run is over. One-shot sandboxes are deleted (or kept running); a
+     * persistent one is stopped with its data (default), left running or deleted. A persistent sandbox that never
+     * became ready is deleted if this build created it, and left alone otherwise.
+     */
+    private void finishSandbox(
+            DockerSandboxApi api,
+            String sandboxId,
+            String persistent,
+            String afterRun,
+            boolean ready,
+            boolean reused,
+            PrintStream logger) {
+        if (persistent.isEmpty()) {
+            if ("keep".equals(afterRun)) {
+                log(logger, "Keeping sandbox " + sandboxId + " (keepSandbox=true); it expires with its TTL");
+            } else {
+                deleteQuietly(api, sandboxId, logger);
+            }
+            return;
+        }
+        String label = PersistentSandboxes.displayName(persistent) + " (" + sandboxId + ")";
+        if (!ready) {
+            if (reused) {
+                log(logger, "Persistent sandbox " + label + " did not become ready; leaving it as it is."
+                        + persistentHint(persistent));
+            } else {
+                deleteQuietly(api, sandboxId, logger);
+            }
+            return;
+        }
+        switch (afterRun) {
+            case "keep":
+                log(logger, "Leaving persistent sandbox " + label + " running (afterRun=keep); it stops with its TTL");
+                break;
+            case "delete":
+                deleteQuietly(api, sandboxId, logger);
+                break;
+            default:
+                stopQuietly(api, sandboxId, label, logger);
+        }
+    }
+
+    private void stopQuietly(DockerSandboxApi api, String sandboxId, String label, PrintStream logger) {
+        Timing t = timing;
+        IOException last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                String status = api.getSandbox(sandboxId).status();
+                if ("stopped".equals(status) || "stopping".equals(status)) {
+                    log(logger, "Persistent sandbox " + label + " is already " + status + " (data kept)");
+                    return;
+                }
+                log(logger, "Stopping persistent sandbox " + label + " (data kept)");
+                api.stopSandbox(sandboxId); // do not wait for 'stopped': the next build waits if it needs to
+                return;
+            } catch (SandboxApiException e) {
+                if (e.isNotFound()) {
+                    log(logger, "Persistent sandbox " + label + " no longer exists");
+                    return;
+                }
+                last = e;
+            } catch (IOException e) {
+                last = e;
+            }
+            try {
+                Thread.sleep(t.deleteRetryPause.toMillis());
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        log(logger, "WARNING: could not stop persistent sandbox " + label + " ("
+                + (last == null ? "interrupted" : mask(last.getMessage())) + "); it keeps running until its TTL stops it");
     }
 
     private Sandbox waitRunning(DockerSandboxApi api, Sandbox initial) throws IOException, InterruptedException {
@@ -516,9 +711,31 @@ public class SandboxJobRunner {
                     + "run it inside a node block or set uploadWorkspace=false without artifacts");
         }
         parseEnv(spec.getEnv());
+        if (!spec.getPersistent().isEmpty()) {
+            PersistentSandboxes.validateName(spec.getPersistent());
+        }
         if (spec.getWorkDir() != null && !spec.getWorkDir().startsWith("/")) {
             throw new AbortException("sandboxRun: 'workDir' must be an absolute path");
         }
+    }
+
+    /**
+     * {@code afterRun} if given; otherwise {@code keep} for {@code keepSandbox: true}, {@code stop} for a persistent
+     * sandbox and {@code delete} for everything else.
+     */
+    static String effectiveAfterRun(SandboxRunSpec spec) throws AbortException {
+        String value = spec.getAfterRun();
+        boolean persistent = !spec.getPersistent().isEmpty();
+        if (value.isEmpty()) {
+            return spec.isKeepSandbox() ? "keep" : persistent ? "stop" : "delete";
+        }
+        if (!value.equals("stop") && !value.equals("keep") && !value.equals("delete")) {
+            throw new AbortException("sandboxRun: 'afterRun' must be stop, keep or delete");
+        }
+        if (value.equals("stop") && !persistent) {
+            throw new AbortException("sandboxRun: afterRun 'stop' needs 'persistent' (a one-shot sandbox is deleted or kept)");
+        }
+        return value;
     }
 
     static Map<String, String> parseEnv(List<String> entries) throws AbortException {

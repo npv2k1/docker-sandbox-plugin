@@ -31,6 +31,8 @@ public final class SandboxRunSpec {
     private boolean allowEmptyArtifacts = true;
     private String workDir;
     private int maxUploadMb = 200;
+    private String persistent = "";
+    private String afterRun = "";
 
     public SandboxRunSpec(String script) {
         this.script = script == null ? "" : script;
@@ -206,6 +208,26 @@ public final class SandboxRunSpec {
 
     public SandboxRunSpec maxUploadMb(int v) {
         this.maxUploadMb = Math.max(1, v);
+        return this;
+    }
+
+    /** Name of a long-lived sandbox reused across builds, or empty for a one-shot sandbox. */
+    public String getPersistent() {
+        return persistent;
+    }
+
+    public SandboxRunSpec persistent(String v) {
+        this.persistent = nz(v);
+        return this;
+    }
+
+    /** {@code stop}, {@code keep} or {@code delete}; empty means the default (see SandboxJobRunner#effectiveAfterRun). */
+    public String getAfterRun() {
+        return afterRun;
+    }
+
+    public SandboxRunSpec afterRun(String v) {
+        this.afterRun = nz(v).toLowerCase(java.util.Locale.ROOT);
         return this;
     }
 

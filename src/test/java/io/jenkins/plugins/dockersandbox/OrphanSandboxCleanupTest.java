@@ -101,6 +101,26 @@ class OrphanSandboxCleanupTest {
     }
 
     @Test
+    void neverTouchesPersistentSandboxesEvenWhenTheirCreatingBuildIsOver() throws Exception {
+        FreeStyleProject p = r.createFreeStyleProject();
+        FreeStyleBuild done = r.buildAndAssertSuccess(p);
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("jenkins-instance", config.getInstanceId());
+        labels.put("jenkins-run", SandboxJobRunner.encodeRunId(done.getExternalizableId()));
+        labels.put("jenkins-persistent", "long-lived");
+        String persistent = api.createSandbox(
+                        new CreateSandboxRequest("jkp-long-lived", null, null, null, labels, null), UUID.randomUUID().toString())
+                .id();
+        cloud.sandbox(persistent).createdAt = Instant.now().minusSeconds(86_400);
+        String orphan = create(config.getInstanceId(), done, true, false);
+
+        assertEquals(1, cleanup());
+        assertTrue(cloud.sandbox(orphan).deleted);
+        assertFalse(cloud.sandbox(persistent).deleted, "persistent sandboxes are long-lived by design");
+        assertEquals(0, cleanup());
+    }
+
+    @Test
     void sandboxOfRunningBuildIsKeptUntilBuildEnds() throws Exception {
         FreeStyleProject p = r.createFreeStyleProject();
         p.getBuildersList().add(new SleepBuilder(4000));

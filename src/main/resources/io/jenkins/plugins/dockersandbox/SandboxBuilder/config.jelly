@@ -43,6 +43,12 @@
     <f:entry title="Environment variables (NAME=value per line)" field="envText">
       <f:textarea />
     </f:entry>
+    <f:entry title="Persistent sandbox name" field="persistent">
+      <f:textbox />
+    </f:entry>
+    <f:entry title="After the run (stop, keep, delete)" field="afterRun">
+      <f:select />
+    </f:entry>
     <f:entry title="Keep sandbox after the build" field="keepSandbox">
       <f:checkbox />
     </f:entry>

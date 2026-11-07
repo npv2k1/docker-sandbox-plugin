@@ -127,6 +127,47 @@ public class HttpDockerSandboxApi implements DockerSandboxApi {
     }
 
     @Override
+    public Sandbox startSandbox(String sandboxId) throws IOException {
+        return transition(sandboxId, "start");
+    }
+
+    @Override
+    public Sandbox stopSandbox(String sandboxId) throws IOException {
+        return transition(sandboxId, "stop");
+    }
+
+    /** POST {@code /v1/sandboxes/{id}/<action>} with the current etag as {@code If-Match}; one retry on 412/428. */
+    private Sandbox transition(String sandboxId, String action) throws IOException {
+        byte[] json = "{}".getBytes(StandardCharsets.UTF_8);
+        for (int attempt = 0; ; attempt++) {
+            String etag;
+            try (HttpCaller.Response r = getSandboxResponse(sandboxId)) {
+                Sandbox sandbox = HttpCaller.MAPPER.readValue(r.bytes(), Sandbox.class);
+                etag = sandbox.core() != null && sandbox.core().etag() != null
+                        ? sandbox.core().etag()
+                        : r.headers.firstValue("ETag").orElse(null);
+            }
+            String path = "/v1/sandboxes/" + enc(sandboxId) + "/" + action;
+            try (HttpCaller.Response r = caller.send(auth, t -> {
+                HttpRequest.Builder b = request(t, path).header("Content-Type", "application/json");
+                if (etag != null) {
+                    b.header("If-Match", etag);
+                }
+                return b.POST(HttpRequest.BodyPublishers.ofByteArray(json)).build();
+            })) {
+                byte[] body = r.bytes();
+                return body.length == 0 ? null : HttpCaller.MAPPER.readValue(body, Sandbox.class);
+            } catch (SandboxApiException e) {
+                boolean stale = e.getHttpStatus() == 412 || e.getHttpStatus() == 428;
+                if (stale && attempt == 0) {
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    @Override
     public EndpointCredential createEndpointCredential(String sandboxId, List<String> permissions, int ttlSeconds)
             throws IOException {
         byte[] json = HttpCaller.MAPPER.writeValueAsBytes(

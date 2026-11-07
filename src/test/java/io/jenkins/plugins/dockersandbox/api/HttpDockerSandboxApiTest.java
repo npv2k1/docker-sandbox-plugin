@@ -158,6 +158,49 @@ class HttpDockerSandboxApiTest {
     }
 
     @Test
+    void stopAndStartSendEmptyJsonBodyWithCoreEtagInIfMatch() throws Exception {
+        // the live service may omit the ETag header on GET: core.etag is used
+        docker.stubFor(get(urlEqualTo("/sandboxes/v1/sandboxes/sb1")).willReturn(aResponse().withBody(SANDBOX_JSON)));
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes/sb1/stop")).willReturn(aResponse().withStatus(202)
+                .withBody(SANDBOX_JSON.replace("running", "stopping"))));
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes/sb1/start")).willReturn(aResponse().withStatus(202)
+                .withBody(SANDBOX_JSON.replace("running", "starting"))));
+        assertEquals("stopping", api.stopSandbox("sb1").status());
+        assertEquals("starting", api.startSandbox("sb1").status());
+        docker.verify(1, postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes/sb1/stop"))
+                .withHeader("If-Match", equalTo("\"e1\""))
+                .withHeader("Content-Type", equalTo("application/json"))
+                .withRequestBody(equalToJson("{}")));
+        docker.verify(1, postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes/sb1/start"))
+                .withHeader("If-Match", equalTo("\"e1\"")));
+    }
+
+    @Test
+    void stopRetriesOnceWithFreshEtagOnStalePrecondition() throws Exception {
+        docker.stubFor(get(urlEqualTo("/sandboxes/v1/sandboxes/sb1")).willReturn(aResponse().withBody(SANDBOX_JSON)));
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes/sb1/stop"))
+                .inScenario("etag").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(412).withBody("{\"code\":\"failedPrecondition\",\"message\":\"stale\"}"))
+                .willSetStateTo("fresh"));
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes/sb1/stop"))
+                .inScenario("etag").whenScenarioStateIs("fresh")
+                .willReturn(aResponse().withStatus(202).withBody(SANDBOX_JSON)));
+        api.stopSandbox("sb1");
+        docker.verify(2, postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes/sb1/stop")));
+        docker.verify(2, getRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes/sb1")));
+    }
+
+    @Test
+    void startFailsAfterSecondStalePrecondition() throws Exception {
+        docker.stubFor(get(urlEqualTo("/sandboxes/v1/sandboxes/sb1")).willReturn(aResponse().withBody(SANDBOX_JSON)));
+        docker.stubFor(post(urlEqualTo("/sandboxes/v1/sandboxes/sb1/start"))
+                .willReturn(aResponse().withStatus(412).withBody("{\"code\":\"failedPrecondition\",\"message\":\"stale\"}")));
+        SandboxApiException e = assertThrows(SandboxApiException.class, () -> api.startSandbox("sb1"));
+        assertEquals(412, e.getHttpStatus());
+        docker.verify(2, postRequestedFor(urlEqualTo("/sandboxes/v1/sandboxes/sb1/start")));
+    }
+
+    @Test
     void deleteOfMissingSandboxIsNotAnError() throws Exception {
         docker.stubFor(get(urlEqualTo("/sandboxes/v1/sandboxes/gone")).willReturn(aResponse().withStatus(404)
                 .withBody("{\"code\":\"notFound\",\"message\":\"sandbox not found\"}")));

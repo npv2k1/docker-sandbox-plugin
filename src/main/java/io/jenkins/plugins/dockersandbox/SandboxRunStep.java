@@ -38,6 +38,8 @@ public class SandboxRunStep extends Step {
     private boolean allowEmptyArtifacts = true;
     private String workDir = "";
     private int maxUploadMb = 200;
+    private String persistent = "";
+    private String afterRun = "";
     private List<String> env = new ArrayList<>();
 
     @DataBoundConstructor
@@ -211,6 +213,24 @@ public class SandboxRunStep extends Step {
         this.env = env == null ? new ArrayList<>() : new ArrayList<>(env);
     }
 
+    public String getPersistent() {
+        return persistent;
+    }
+
+    @DataBoundSetter
+    public void setPersistent(String persistent) {
+        this.persistent = persistent == null ? "" : persistent;
+    }
+
+    public String getAfterRun() {
+        return afterRun;
+    }
+
+    @DataBoundSetter
+    public void setAfterRun(String afterRun) {
+        this.afterRun = afterRun == null ? "" : afterRun;
+    }
+
     SandboxRunSpec toSpec() {
         return new SandboxRunSpec(script)
                 .account(account)
@@ -230,6 +250,8 @@ public class SandboxRunStep extends Step {
                 .allowEmptyArtifacts(allowEmptyArtifacts)
                 .workDir(workDir)
                 .maxUploadMb(maxUploadMb)
+                .persistent(persistent)
+                .afterRun(afterRun)
                 .env(env);
     }
 

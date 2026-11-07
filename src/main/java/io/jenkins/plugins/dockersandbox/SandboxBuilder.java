@@ -43,6 +43,8 @@ public class SandboxBuilder extends Builder implements SimpleBuildStep {
     private boolean allowEmptyArtifacts = true;
     private String workDir = "";
     private int maxUploadMb = 200;
+    private String persistent = "";
+    private String afterRun = "";
     private String envText = "";
 
     @DataBoundConstructor
@@ -217,6 +219,24 @@ public class SandboxBuilder extends Builder implements SimpleBuildStep {
         this.envText = envText == null ? "" : envText;
     }
 
+    public String getPersistent() {
+        return persistent;
+    }
+
+    @DataBoundSetter
+    public void setPersistent(String persistent) {
+        this.persistent = persistent == null ? "" : persistent;
+    }
+
+    public String getAfterRun() {
+        return afterRun;
+    }
+
+    @DataBoundSetter
+    public void setAfterRun(String afterRun) {
+        this.afterRun = afterRun == null ? "" : afterRun;
+    }
+
     SandboxRunSpec toSpec() {
         List<String> env = new ArrayList<>();
         for (String line : envText.split("\\R")) {
@@ -242,6 +262,8 @@ public class SandboxBuilder extends Builder implements SimpleBuildStep {
                 .allowEmptyArtifacts(allowEmptyArtifacts)
                 .workDir(workDir)
                 .maxUploadMb(maxUploadMb)
+                .persistent(persistent)
+                .afterRun(afterRun)
                 .env(env);
     }
 
@@ -284,6 +306,21 @@ public class SandboxBuilder extends Builder implements SimpleBuildStep {
                 items.add(s.name().toLowerCase(java.util.Locale.ROOT));
             }
             return items;
+        }
+
+        public ListBoxModel doFillAfterRunItems() {
+            ListBoxModel items = new ListBoxModel();
+            items.add("(default)", "");
+            items.add("stop (persistent only)", "stop");
+            items.add("keep", "keep");
+            items.add("delete", "delete");
+            return items;
+        }
+
+        public FormValidation doCheckPersistent(@QueryParameter String value) {
+            return value == null || value.isBlank() || value.trim().matches("[A-Za-z0-9_-]{1,40}")
+                    ? FormValidation.ok()
+                    : FormValidation.error("Use 1-40 letters, digits, '_' or '-'");
         }
 
         public FormValidation doCheckScript(@QueryParameter String value) {

@@ -65,9 +65,17 @@ final class FakeDockerCloud implements AutoCloseable {
         final AtomicInteger polls = new AtomicInteger();
         final AtomicInteger credentials = new AtomicInteger();
         final Map<String, FakeProcess> processes = new ConcurrentHashMap<>();
+        final AtomicInteger startCalls = new AtomicInteger();
+        final AtomicInteger stopCalls = new AtomicInteger();
         volatile boolean deleted;
         volatile Instant createdAt = Instant.now();
         JsonNode createRequest;
+        /** creating, running, stopping, stopped, starting or failed; changed under {@code synchronized (this)}. */
+        volatile String state = "creating";
+        /** Bumped on every state change, so the etag changes like on the real service. */
+        volatile int version = 1;
+        /** GETs left until a stopping/starting sandbox reaches its target state. */
+        int transitionPolls;
 
         Sandbox(String id, String owner, String displayName, Path root) {
             this.id = id;
@@ -93,7 +101,12 @@ final class FakeDockerCloud implements AutoCloseable {
     private final Map<String, Sandbox> sandboxes = new ConcurrentHashMap<>();
     private final List<String> deletedIds = new CopyOnWriteArrayList<>();
     private final AtomicInteger sandboxCounter = new AtomicInteger();
+    private final List<String> stoppedIds = new CopyOnWriteArrayList<>();
+    private final List<String> startedIds = new CopyOnWriteArrayList<>();
     private volatile int startupPolls;
+    private volatile boolean failStart;
+    private volatile int stopPolls = 1;
+    private volatile int startPolls = 1;
     private volatile boolean failStartup;
 
     FakeDockerCloud() throws IOException {
@@ -118,6 +131,43 @@ final class FakeDockerCloud implements AutoCloseable {
     /** Number of GETs a new sandbox answers with "creating" before it is running. */
     void setStartupPolls(int polls) {
         this.startupPolls = polls;
+    }
+
+    /** Number of GETs a stopping sandbox answers with "stopping" before it is "stopped". */
+    void setStopPolls(int polls) {
+        this.stopPolls = polls;
+    }
+
+    /** Number of GETs a starting sandbox answers with "starting" before it is "running". */
+    void setStartPolls(int polls) {
+        this.startPolls = polls;
+    }
+
+    /** Start requests are refused with HTTP 500 (a sandbox that cannot be resumed). */
+    void setFailStart(boolean fail) {
+        this.failStart = fail;
+    }
+
+    /** Ids of sandboxes the plugin stopped (one entry per accepted stop request). */
+    List<String> stoppedIds() {
+        return stoppedIds;
+    }
+
+    /** Ids of sandboxes the plugin started (one entry per accepted start request). */
+    List<String> startedIds() {
+        return startedIds;
+    }
+
+    /** Test hook: puts a sandbox into a state directly (for example "stopped" as if its TTL had fired). */
+    void forceState(String id, String state) {
+        Sandbox sb = sandboxes.get(id);
+        synchronized (sb) {
+            sb.state = state;
+            sb.version++;
+            if (!state.equals("running") && !state.equals("creating")) {
+                killProcesses(sb);
+            }
+        }
     }
 
     /** New sandboxes report status "failed" instead of running. */
@@ -172,7 +222,7 @@ final class FakeDockerCloud implements AutoCloseable {
 
     // ---- request handling ----------------------------------------------------------------------------------
 
-    private static final Pattern SANDBOX_PATH = Pattern.compile("^/sandboxes/v1/sandboxes(?:/([^/]+)(?:/(endpoint-credentials))?)?$");
+    private static final Pattern SANDBOX_PATH = Pattern.compile("^/sandboxes/v1/sandboxes(?:/([^/]+)(?:/(endpoint-credentials|stop|start))?)?$");
     private static final Pattern ENDPOINT_PATH = Pattern.compile("^/ep/([^/]+)(/v1/.*)$");
 
     private final class Transformer implements ResponseDefinitionTransformerV2 {
@@ -253,7 +303,7 @@ final class FakeDockerCloud implements AutoCloseable {
                 ArrayNode list = JSON.createArrayNode();
                 sandboxes.values().stream()
                         .filter(s -> s.owner.equals(owner) && !s.deleted)
-                        .forEach(s -> list.add(sandboxJson(s, false)));
+                        .forEach(s -> list.add(sandboxJson(s)));
                 ObjectNode body = JSON.createObjectNode();
                 body.set("sandboxes", list);
                 return json(200, body.toString());
@@ -264,7 +314,7 @@ final class FakeDockerCloud implements AutoCloseable {
         if (sb == null || sb.deleted || !sb.owner.equals(owner)) {
             return error(404, "notFound", "sandbox not found");
         }
-        if (sub != null) {
+        if (sub != null && sub.equals("endpoint-credentials")) {
             ObjectNode cred = JSON.createObjectNode();
             cred.put("token", "ep-" + id + "-" + sb.credentials.incrementAndGet());
             cred.put("expireTime", Instant.now().plusSeconds(300).toString());
@@ -273,13 +323,16 @@ final class FakeDockerCloud implements AutoCloseable {
             return json(200, cred.toString());
         }
         if (method.equals("GET")) {
-            boolean running = sb.polls.incrementAndGet() > startupPolls;
+            advance(sb);
             return new com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder()
                     .withStatus(200)
                     .withHeader("Content-Type", "application/json")
                     .withHeader("ETag", etag(sb))
-                    .withBody(sandboxJson(sb, running).toString())
+                    .withBody(sandboxJson(sb).toString())
                     .build();
+        }
+        if (method.equals("POST") && (route(uri).equals("stop") || route(uri).equals("start"))) {
+            return lifecycle(request, sb, route(uri).equals("stop"));
         }
         if (method.equals("DELETE")) {
             String ifMatch = request.getHeader("If-Match");
@@ -303,7 +356,79 @@ final class FakeDockerCloud implements AutoCloseable {
     }
 
     private static String etag(Sandbox sb) {
-        return "\"" + sb.id + "-v1\"";
+        return "\"" + sb.id + "-v" + sb.version + "\"";
+    }
+
+    private static String route(URI uri) {
+        String p = uri.getPath();
+        return p.substring(p.lastIndexOf('/') + 1);
+    }
+
+    /** One GET moves a creating sandbox towards running and a stopping/starting one towards its target. */
+    private void advance(Sandbox sb) {
+        synchronized (sb) {
+            switch (sb.state) {
+                case "creating":
+                    if (sb.polls.incrementAndGet() > startupPolls) {
+                        sb.state = "running";
+                    }
+                    break;
+                case "stopping":
+                    if (--sb.transitionPolls <= 0) {
+                        sb.state = "stopped";
+                        sb.version++;
+                    }
+                    break;
+                case "starting":
+                    if (--sb.transitionPolls <= 0) {
+                        sb.state = "running";
+                        sb.version++;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /**
+     * POST stop/start: needs the current etag in If-Match (428 without, 412 when stale), only valid from running
+     * respectively stopped (409 otherwise), answers 202 with the sandbox in its transitional state. Stopping kills the
+     * processes but keeps the sandbox directory, which is the persistent data.
+     */
+    private ResponseDefinition lifecycle(Request request, Sandbox sb, boolean stop) {
+        if (!stop && failStart) {
+            return error(500, "internal", "cannot resume this sandbox");
+        }
+        String ifMatch = request.getHeader("If-Match");
+        if (ifMatch == null) {
+            return error(428, "failedPrecondition", "If-Match required");
+        }
+        synchronized (sb) {
+            if (!ifMatch.equals(etag(sb))) {
+                return error(412, "failedPrecondition", "stale etag");
+            }
+            if (!sb.state.equals(stop ? "running" : "stopped")) {
+                return error(409, "failedPrecondition", "cannot " + (stop ? "stop" : "start") + " a sandbox that is " + sb.state);
+            }
+            sb.state = stop ? "stopping" : "starting";
+            sb.transitionPolls = stop ? stopPolls : startPolls;
+            sb.version++;
+            if (stop) {
+                killProcesses(sb);
+                sb.stopCalls.incrementAndGet();
+                stoppedIds.add(sb.id);
+            } else {
+                sb.startCalls.incrementAndGet();
+                startedIds.add(sb.id);
+            }
+            return new com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder()
+                    .withStatus(202)
+                    .withHeader("Content-Type", "application/json")
+                    .withHeader("ETag", etag(sb))
+                    .withBody(sandboxJson(sb).toString())
+                    .build();
+        }
     }
 
     private ResponseDefinition createSandbox(Request request, String owner, Account account) throws IOException {
@@ -327,26 +452,28 @@ final class FakeDockerCloud implements AutoCloseable {
                     .withStatus(201)
                     .withHeader("Content-Type", "application/json")
                     .withHeader("ETag", etag(sb))
-                    .withBody(sandboxJson(sb, false).toString())
+                    .withBody(sandboxJson(sb).toString())
                     .build();
         }
     }
 
-    private ObjectNode sandboxJson(Sandbox sb, boolean running) {
+    private ObjectNode sandboxJson(Sandbox sb) {
+        boolean running = sb.state.equals("running");
         ObjectNode n = JSON.createObjectNode();
         n.put("name", "sandboxes/" + sb.id);
         n.put("uid", sb.id);
         n.put("displayName", sb.displayName);
         ObjectNode core = n.putObject("core");
-        core.put("status", failStartup ? "failed" : running ? "running" : "creating");
-        if (failStartup) {
+        boolean failed = failStartup || sb.state.equals("failed");
+        core.put("status", failed ? "failed" : sb.state);
+        if (failed) {
             n.putObject("failure").put("code", "internal").put("message", "image pull failed");
         }
         core.put("etag", etag(sb));
         core.put("createdAt", sb.createdAt.toString());
         ObjectNode labels = core.putObject("labels");
         sb.labels.forEach(labels::put);
-        if (running && !failStartup) {
+        if (running && !failed) {
             core.putObject("endpoint").put("uri", server.baseUrl() + "/ep/" + sb.id);
         }
         return n;
@@ -363,6 +490,9 @@ final class FakeDockerCloud implements AutoCloseable {
         if (auth == null || !auth.startsWith("Bearer ep-" + id + "-")) {
             return error(401, "unauthenticated", "bad endpoint credential");
         }
+        if (sb.state.equals("stopped") || sb.state.equals("stopping") || sb.state.equals("starting")) {
+            return error(503, "unavailable", "sandbox is " + sb.state);
+        }
         if (route.equals("/v1/processes/exec") && method.equals("POST")) {
             JsonNode req = JSON.readTree(request.getBody());
             List<String> cmd = new ArrayList<>();
@@ -377,7 +507,9 @@ final class FakeDockerCloud implements AutoCloseable {
                 resp.put("incomplete", false);
                 return json(200, resp.toString());
             }
-            Process p = new ProcessBuilder(cmd).directory(sb.root.toFile()).start();
+            ProcessBuilder execBuilder = new ProcessBuilder(cmd).directory(sb.root.toFile());
+            isolate(execBuilder, sb);
+            Process p = execBuilder.start();
             p.getOutputStream().close();
             ByteArrayOutputStream err = new ByteArrayOutputStream();
             Thread t = new Thread(() -> {
@@ -409,6 +541,7 @@ final class FakeDockerCloud implements AutoCloseable {
             req.path("cmd").forEach(c -> cmd.add(c.asText()));
             ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
             pb.directory(resolve(sb, req.path("workingDir").asText("/")).toFile());
+            isolate(pb, sb);
             req.path("env").fields().forEachRemaining(e -> pb.environment().put(e.getKey(), e.getValue().asText()));
             Process process = pb.start();
             process.getOutputStream().close();
@@ -508,6 +641,18 @@ final class FakeDockerCloud implements AutoCloseable {
             gz.write(body);
         }
         return out.toByteArray();
+    }
+
+    /**
+     * Points HOME and TMPDIR into the sandbox directory, so scripts that use {@code $HOME}, {@code ~} or
+     * {@code $TMPDIR} stay inside the fake's temp root. (Scripts that hard-code an absolute path such as
+     * {@code /tmp/x} inside their own text still reach the host: the fake can only rewrite command arguments.)
+     */
+    private static void isolate(ProcessBuilder pb, Sandbox sb) throws IOException {
+        Path home = Files.createDirectories(sb.root.resolve("home/agent"));
+        Path tmp = Files.createDirectories(sb.root.resolve("tmp"));
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("TMPDIR", tmp.toString());
     }
 
     private static Path resolve(Sandbox sb, String sandboxPath) {

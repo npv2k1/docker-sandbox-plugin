@@ -24,6 +24,18 @@ public interface DockerSandboxApi {
      */
     void deleteSandbox(String sandboxId, boolean force) throws IOException;
 
+    /**
+     * Starts a stopped sandbox ({@code POST .../start}, 202). Like delete it reads the current etag first and retries
+     * once on a stale precondition (412/428). Poll {@link #getSandbox} until running.
+     */
+    Sandbox startSandbox(String sandboxId) throws IOException;
+
+    /**
+     * Stops a running sandbox ({@code POST .../stop}, 202): compute stops, stored data is kept. Same etag handling as
+     * {@link #startSandbox}. Poll {@link #getSandbox} until stopped.
+     */
+    Sandbox stopSandbox(String sandboxId) throws IOException;
+
     /** Issues a short-lived endpoint credential for the sandbox. */
     EndpointCredential createEndpointCredential(String sandboxId, List<String> permissions, int ttlSeconds)
             throws IOException;
