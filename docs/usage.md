@@ -2,7 +2,7 @@
 
 The plugin provides a Pipeline step (`sandboxRun`) and a Freestyle build step. Both take the same options and run the
 same code: the workspace is uploaded to a fresh sandbox, the script runs with `bash -e` in the work directory (default
-`/home/agent/workspace`), its output is streamed to the build log, artifacts are copied back and the sandbox is deleted.
+`/home/agent/workspace` with a kit, `/tmp/workspace` with a custom image), its output is streamed to the build log, artifacts are copied back and the sandbox is deleted.
 
 Log lines written by the plugin itself start with `[docker-sandbox]`.
 
@@ -17,19 +17,40 @@ Only `script` is required; every other parameter is optional.
 | `account` | `String` | `''` | Pin the build to this account id. Empty = let the load balancer choose |
 | `accountLabel` | `String` | `''` | Space-separated labels; the account must carry **all** of them (case-insensitive) |
 | `kit` | `String` | `''` = global default kit (`shell`) | Kit applied to the sandbox. An empty value means "use the global default", not "no kit"; to create sandboxes without a kit, set the global *Default kit* to empty |
+| `image` | `String` | `''` | Run in a custom Docker image instead of a kit: an OCI reference (`node:22`, `maven:3.9-eclipse-temurin-21`) or a managed image `images/<id>`. Overrides `kit` and the global defaults, and no kit is sent. The image must provide `bash` and `tar`. See [custom images](#custom-docker-images) |
+| `imageCommand` | `String` | `''` = `sleep infinity` | Keep-alive command of the image, run as `sh -c <value>`. Only used with an image |
 | `size` | `String` | `''` = global default size (`small`) | `micro`, `small`, `medium`, `large` or `xl` (case-insensitive); anything else fails the build |
 | `ttlMinutes` | `int` | `0` = global default (60) | Sandbox lifetime in minutes; the sandbox is deleted at expiry. Negative values count as `0` |
 | `uploadWorkspace` | `boolean` | `true` | Upload the workspace to the sandbox before the script |
 | `includes` | `String` | `**/*` | Ant-style include patterns of the uploaded files (blank = `**/*`) |
 | `excludes` | `String` | `''` | Ant-style exclude patterns, for example `.git/**,node_modules/**` |
 | `maxUploadMb` | `int` | `200` | Maximum size of the compressed workspace archive in MB (minimum 1); larger archives fail the build |
-| `workDir` | `String` | `/home/agent/workspace` | Absolute path inside the sandbox where the workspace is extracted and the script runs |
+| `workDir` | `String` | `''` = `/home/agent/workspace` (kit) or `/tmp/workspace` (image) | Absolute path inside the sandbox where the workspace is extracted and the script runs. An explicit value is used in both modes |
 | `artifacts` | `String` | `''` | Comma-separated relative Ant-style globs (relative to `workDir`) copied back into the Jenkins workspace after the script ends |
 | `allowEmptyArtifacts` | `boolean` | `true` | If no file matches `artifacts`: `true` logs a warning, `false` fails the build |
 | `env` | `List<String>` | `[]` | `NAME=value` entries set for the script process only (not stored on the sandbox) |
 | `timeoutMinutes` | `int` | `60` | Terminates the script after this many minutes (TERM, then KILL) and fails the build. `0` disables the limit |
 | `keepSandbox` | `boolean` | `false` | Do not delete the sandbox at the end; it expires with its TTL. Such sandboxes are never touched by the orphan cleanup |
 | `returnStatus` | `boolean` | `false` | Return the exit code instead of failing the build on a non-zero exit |
+
+### Custom Docker images
+
+With `image` (or a global *Default image*) the sandbox is created from that image instead of a kit.
+
+* Precedence: step `image` > step `kit` > global *Default image* > global *Default kit*. In image mode no kit is sent.
+* Values starting with `images/` are managed images (sent as `image`); anything else is an OCI reference (sent as
+  `imageRef`). The two are never sent together.
+* The plugin sends `startupExecution.rawImage.start.argv = ["sh", "-c", imageCommand]` (`sleep infinity` when
+  `imageCommand` is blank) so the sandbox stays alive; an image such as `node:22` would otherwise exit at once.
+* After the sandbox is running the plugin checks that the image has `bash` and `tar`
+  (`sh -c 'command -v bash >/dev/null && command -v tar >/dev/null'`). If not, the build fails with
+  `Image <ref> must provide bash and tar (alpine: apk add bash tar)`; the sandbox is still deleted.
+* The sandbox gets the label `jenkins-image` (the sanitized image reference).
+* `workDir` defaults to `/tmp/workspace` in image mode, which non-root image users can write to.
+
+**Not verified against the live service.** Sandboxes from raw images (including whether the process and file APIs work
+in them, and pulls from private registries, which the plugin has no way to authenticate) are covered by automated tests
+against a fake only. See [Troubleshooting](troubleshooting.md#custom-image-problems).
 
 Notes on the patterns:
 
@@ -76,6 +97,8 @@ Under **Advanced**:
 
 | UI label | Equivalent parameter | Default |
 | --- | --- | --- |
+| Docker image | `image` | empty (use kit / global defaults) |
+| Image keep-alive command | `imageCommand` | empty (`sleep infinity`) |
 | Kit | `kit` | empty (global default) |
 | Sandbox TTL (minutes, 0 = default) | `ttlMinutes` | `0` |
 | Workspace includes / excludes | `includes` / `excludes` | `**/*` / empty |
@@ -83,7 +106,7 @@ Under **Advanced**:
 | Keep sandbox after the build | `keepSandbox` | unchecked |
 | Do not fail on non-zero exit (mark unstable) | `returnStatus` | unchecked; a non-zero exit marks the build **UNSTABLE** |
 | Allow empty artifacts | `allowEmptyArtifacts` | checked |
-| Work directory in the sandbox | `workDir` | `/home/agent/workspace` |
+| Work directory in the sandbox | `workDir` | empty (`/home/agent/workspace` with a kit, `/tmp/workspace` with an image) |
 | Max workspace upload (MB) | `maxUploadMb` | `200` |
 
 ## Examples
@@ -113,8 +136,51 @@ pipeline {
 }
 ```
 
-The sandbox image must provide Node.js; the default `shell` kit does not promise it. See
+The sandbox image must provide Node.js; the default `shell` kit does not promise it. Use a Node image instead
+(see [Node build in a custom image](#node-build-in-a-custom-image)) or see
 [Troubleshooting](troubleshooting.md#command-not-found-in-the-script).
+
+### Maven build in a custom image, with artifacts
+
+```groovy
+node {
+  checkout scm
+  sandboxRun(
+    image: 'maven:3.9-eclipse-temurin-21',
+    script: 'mvn -B -ntp verify',
+    size: 'large',
+    excludes: '.git/**,target/**',
+    artifacts: 'target/*.jar, target/surefire-reports/*.xml',
+    allowEmptyArtifacts: false)
+  junit 'target/surefire-reports/*.xml'
+  archiveArtifacts artifacts: 'target/*.jar'
+}
+```
+
+The Maven images are Debian based and include `bash` and `tar`. The script runs in `/tmp/workspace`.
+
+### Node build in a custom image
+
+```groovy
+node {
+  checkout scm
+  sandboxRun(
+    image: 'node:22',
+    script: 'npm ci && npm run build',
+    excludes: '.git/**,node_modules/**',
+    artifacts: 'dist/**')
+}
+```
+
+### Managed image
+
+```groovy
+node {
+  sandboxRun(image: 'images/my-toolchain', script: 'make test', uploadWorkspace: true)
+}
+```
+
+`images/<id>` refers to an image resource of your Docker account (for example created with `sbx --cloud template save`).
 
 ### Maven build with test reports and the jar
 

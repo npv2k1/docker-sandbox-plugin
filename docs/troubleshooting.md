@@ -93,8 +93,30 @@ not published.
 **Cause.** The plugin runs everything through `bash` and `tar`: the script as `bash -e`, the workspace with
 `tar -xzf`, artifacts with `bash` globbing and `tar -czf`.
 
-**Fix.** Use a kit/image that includes `bash` and `tar` (the default `shell` kit is expected to). Alternatively set
-`uploadWorkspace: false` and no `artifacts` if you only need the script to run.
+**Fix.** Use a kit/image that includes `bash` and `tar` (the default `shell` kit is expected to). For custom images the
+plugin checks this first and fails with `Image <ref> must provide bash and tar`, see
+[Custom image problems](#custom-image-problems). Without an image, you can set `uploadWorkspace: false` and no
+`artifacts` if you only need the script to run (bash is still needed for the script).
+
+## Custom image problems
+
+Raw-image sandboxes are **not yet verified against the live Docker service**; the behavior below is what the plugin
+implements, and reports are welcome.
+
+**Image missing bash or tar.** `Image <ref> must provide bash and tar (alpine: apk add bash tar)`. The plugin probes
+`command -v bash` and `command -v tar` right after the sandbox starts. Use an image that ships both, or derive your own
+(`FROM alpine` + `RUN apk add --no-cache bash tar`). The sandbox is deleted and the account slot released.
+
+**Image pull failure.** `Sandbox X failed to start: ...` or a 4xx when creating the sandbox, for an unknown tag or a
+private registry. The plugin has no way to pass registry credentials (unverified whether the service supports private
+registries); use a public image or a managed `images/<id>` created in your Docker account.
+
+**Sandbox exits immediately or never becomes ready.** The plugin replaces the image command with `sh -c <imageCommand>`
+(`sleep infinity` by default). The image needs `sh`; set `imageCommand` if the default keep-alive does not work for it.
+
+**Permission denied in the work directory.** Image users are often not root. The default work directory in image mode is
+`/tmp/workspace`, which is normally writable. If you set `workDir` yourself, choose a path the image user can create
+(for example not `/home/agent/workspace`, `/opt` or `/`).
 
 ## Command not found in the script
 

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Custom Docker images: `image` and `imageCommand` options on `sandboxRun` and the Freestyle step, and a global
+  *Default image*. Precedence is step image, step kit, global image, global kit. `images/<id>` values are sent as
+  `image`, others as `imageRef`, with `startupExecution.rawImage` keeping the sandbox alive. The work directory defaults
+  to `/tmp/workspace` in image mode, the image needs `bash` and `tar` (checked after start), and the management page
+  shows the default image. Not yet verified against the live service.
+
 ## [1.0.0] - Unreleased
 
 First release. Experimental: the Docker Cloud Sandboxes API is experimental and the plugin has not yet been verified

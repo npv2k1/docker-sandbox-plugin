@@ -19,6 +19,8 @@ giữa các tài khoản; xem phần [Hướng dẫn nhanh](#hướng-dẫn-nhan
 * `sandboxRun` Pipeline step and a *Run script in Docker Cloud Sandbox* Freestyle build step.
 * Workspace is uploaded as a `tar.gz` archive (with include/exclude patterns and a size limit); the script runs with
   `bash -e` and its output is streamed live to the build log.
+* Run in a **custom Docker image** (`image: 'maven:3.9-eclipse-temurin-21'`, or a managed `images/<id>`) instead of a
+  kit; not yet verified against the live service.
 * Artifacts (Ant-style globs) are copied back into the Jenkins workspace.
 * **Multiple Docker accounts**, each with its own concurrency limit, weight and labels.
 * Four load-balancing strategies: least loaded, round robin, weighted random, first available.

@@ -38,6 +38,7 @@ touching the plugin settings.
 | Accounts | `accounts` | none | The Docker accounts, see [account fields](#account-fields). IDs must be unique and non-empty, otherwise the form is rejected |
 | Load-balancing strategy | `strategy` | Least loaded | See [strategies](#load-balancing-strategies) |
 | Default kit | `defaultKit` | `shell` | Kit applied when a build does not set `kit`. Leave empty to send no kit |
+| Default image | `defaultImage` | empty | Docker image (`node:22` or managed `images/<id>`) used when a build sets neither `image` nor `kit`. When set it wins over *Default kit* and no kit is sent. Precedence: step `image` > step `kit` > *Default image* > *Default kit*. The image needs `bash` and `tar`; the keep-alive command is `sleep infinity` unless the build sets `imageCommand`. **Not yet verified against the live service** |
 | Default size | `defaultSize` | `small` | Size when a build does not set `size`: `micro`, `small`, `medium`, `large`, `xl` |
 | Default sandbox TTL (minutes) | `defaultTtlMinutes` | `60` | Sandbox lifetime when a build does not set `ttlMinutes`. Minimum 1 |
 
@@ -147,6 +148,7 @@ unclassified:
   dockerSandbox:
     strategy: LEAST_LOADED          # LEAST_LOADED | ROUND_ROBIN | WEIGHTED_RANDOM | FIRST_AVAILABLE
     defaultKit: shell
+    defaultImage: ""                # e.g. maven:3.9-eclipse-temurin-21 (wins over defaultKit when set)
     defaultSize: small
     defaultTtlMinutes: 60
     leaseTimeoutMinutes: 30
