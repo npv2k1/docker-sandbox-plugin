@@ -127,6 +127,34 @@ suite executes it unchanged, see `ExamplePipelineTest`):
 
 Copy it into a Pipeline job (*Pipeline script*) or point a job at it with *Pipeline script from SCM*.
 
+### AI coding agent edits your code in a sandbox (Claude Code, Codex, Gemini, ...)
+
+[`examples/ai-agent/Jenkinsfile`](../examples/ai-agent/Jenkinsfile) is a parameterized pipeline: the code is uploaded
+to a sandbox started from the agent's template, the agent works on the `PROMPT` in headless mode, `TEST_COMMAND` runs
+afterwards, and the changed files (`PULL_BACK`) plus `agent.patch`, `agent.log` and `test.log` are copied back and
+archived.
+
+| `AGENT` | Kit (template image) | Headless command | Key variable |
+| --- | --- | --- | --- |
+| `dry-run` (default) | `shell` | fixed `sed` edit, no AI | none |
+| `claude-code` | `docker/sandbox-templates:claude-code` | `claude -p "$AGENT_PROMPT" --dangerously-skip-permissions` | `ANTHROPIC_API_KEY` |
+| `codex` | `docker/sandbox-templates:codex` | `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check "$AGENT_PROMPT"` | `OPENAI_API_KEY` |
+| `gemini` | `docker/sandbox-templates:gemini` | `gemini -p "$AGENT_PROMPT" --yolo` | `GEMINI_API_KEY` |
+| `opencode` | `docker/sandbox-templates:opencode` | `opencode run "$AGENT_PROMPT"` | `ANTHROPIC_API_KEY` |
+| `copilot` | `docker/sandbox-templates:copilot` | `copilot -p "$AGENT_PROMPT" --allow-all-tools` | `GITHUB_TOKEN` |
+| `cursor-agent` | `docker/sandbox-templates:cursor-agent` | `cursor-agent -p "$AGENT_PROMPT" --force` | `CURSOR_API_KEY` |
+
+* The "skip permissions / yolo" flags are acceptable here because the agent runs inside a disposable sandbox that is
+  deleted after the build; the workspace on the Jenkins agent is only changed by the files you list in `PULL_BACK`.
+* API key: either store it in Docker's cloud secret store (`sbx --cloud secret set anthropic`; the key never enters
+  the sandbox) or pass a Jenkins *Secret text* credential via `API_KEY_CREDENTIALS_ID` (needs Credentials Binding).
+* Other published templates (`droid`, `kiro`, `devin`, `docker-agent`, ...) work the same way: add an entry to the
+  `AGENTS` map with `kit` and the agent's headless command. There is no published template for Antigravity (`agy`);
+  use a custom `image` with that CLI installed instead.
+* Verified: the templates exist on Docker Hub and the `dry-run` flow (upload, edit, test, patch, pull back) runs in the
+  test suite. The agents' headless commands and secret-store injection into API-created sandboxes have **not** been run
+  against the live service.
+
 
 ### Node build with artifacts
 

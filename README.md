@@ -93,7 +93,9 @@ node {
 ```
 
 A complete runnable pipeline that creates files locally, copies them into a sandbox, edits and tests them there and
-pulls them back: [examples/round-trip/Jenkinsfile](examples/round-trip/Jenkinsfile).
+pulls them back: [examples/round-trip/Jenkinsfile](examples/round-trip/Jenkinsfile). Let an AI coding agent (Claude Code,
+Codex, Gemini, OpenCode, Copilot, Cursor) edit your code in a sandbox and pull the changes back:
+[examples/ai-agent/Jenkinsfile](examples/ai-agent/Jenkinsfile).
 
 More examples (Maven with artifacts, pinning, parallel builds across accounts) and the full parameter reference are in
 [docs/usage.md](docs/usage.md).

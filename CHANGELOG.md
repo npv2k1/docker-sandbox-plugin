@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `examples/round-trip/Jenkinsfile`: full round-trip pipeline (local files → sandbox → edit and test → back to
   Jenkins), executed unchanged by the test suite.
+- `examples/ai-agent/Jenkinsfile`: AI coding agent (Claude Code, Codex, Gemini, OpenCode, Copilot, Cursor) edits the
+  code in a sandbox started from its Docker template, tests run, changed files and a patch are pulled back.
 
 ## [2.0.0] - 2026-11-07
 

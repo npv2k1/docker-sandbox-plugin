@@ -37,8 +37,8 @@ class ExamplePipelineTest {
         }
     }
 
-    @Test
-    void roundTripExampleCopiesEditsTestsAndPullsFilesBack(JenkinsRule r) throws Exception {
+    /** One fake account and fast polling, like a minimal real setup. */
+    private void setUpCloud(JenkinsRule r) throws Exception {
         cloud = new FakeDockerCloud();
         SandboxJobRunner.setTiming(new SandboxJobRunner.Timing(
                 Duration.ofMillis(20),
@@ -57,10 +57,18 @@ class ExamplePipelineTest {
         account.setAuthUrl(cloud.authUrl());
         DockerSandboxGlobalConfiguration.get().setAccounts(List.of(account));
 
-        String jenkinsfile = Files.readString(Path.of("examples/round-trip/Jenkinsfile"));
+    }
+
+    private WorkflowRun run(JenkinsRule r, String path) throws Exception {
         WorkflowJob job = r.createProject(WorkflowJob.class);
-        job.setDefinition(new CpsFlowDefinition(jenkinsfile, true));
-        WorkflowRun b = r.buildAndAssertSuccess(job);
+        job.setDefinition(new CpsFlowDefinition(Files.readString(Path.of(path)), true));
+        return r.buildAndAssertSuccess(job);
+    }
+
+    @Test
+    void roundTripExampleCopiesEditsTestsAndPullsFilesBack(JenkinsRule r) throws Exception {
+        setUpCloud(r);
+        WorkflowRun b = run(r, "examples/round-trip/Jenkinsfile");
 
         r.assertLogContains("greet.sh says: Xin chao, round-trip!", b);
         r.assertLogContains("status=PASS", b);
@@ -71,6 +79,23 @@ class ExamplePipelineTest {
         // the modified files came back and were archived
         assertTrue(b.getArtifactManager().root().child("app/config.properties").isFile());
         assertTrue(b.getArtifactManager().root().child("report/test-report.txt").isFile());
+        assertEquals(0, cloud.liveSandboxes(), "sandbox must be deleted");
+    }
+
+    @Test
+    void aiAgentExampleDryRunEditsInSandboxAndPullsChangesAndPatchBack(JenkinsRule r) throws Exception {
+        setUpCloud(r);
+        // first build: parameters are not defined yet, so the example falls back to the key-less 'dry-run' agent
+        WorkflowRun b = run(r, "examples/ai-agent/Jenkinsfile");
+
+        r.assertLogContains("dry-run: fixed src/math.sh", b);
+        r.assertLogContains("PASS: add 2 3 = 5", b);
+        r.assertLogContains("Changes made by dry-run", b);
+        assertEquals("docker/sandbox-templates:shell", cloud.sandbox("sb1").createRequest.path("imageRef").asText());
+        // the fixed file and the patch came back into the workspace and were archived
+        String math = Files.readString(Path.of(r.jenkins.getWorkspaceFor(b.getParent()).child("src/math.sh").getRemote()));
+        assertTrue(math.contains("a + b"), math);
+        assertTrue(b.getArtifactManager().root().child("agent.patch").isFile());
         assertEquals(0, cloud.liveSandboxes(), "sandbox must be deleted");
     }
 }

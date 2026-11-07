@@ -1,0 +1,124 @@
+// AI coding agent in a Docker Cloud sandbox:
+//   code in Jenkins -> copied into a sandbox started from the agent's kit -> the agent edits it
+//   -> tests run in the sandbox -> changed files + a patch are pulled back into the Jenkins workspace.
+//
+// Agents use Docker's published sandbox templates (kit '<name>' = image docker/sandbox-templates:<name>):
+// claude-code, codex, gemini, opencode, copilot, cursor-agent. 'dry-run' needs no AI and no key
+// (it applies a fixed edit) and is what the plugin's test suite runs (ExamplePipelineTest).
+//
+// API key, two options:
+//   A. Docker secret store (recommended, the key never enters the sandbox):
+//        sbx login && sbx --cloud secret set anthropic     # or: openai, google, github ...
+//      and leave API_KEY_CREDENTIALS_ID empty.
+//   B. Jenkins "Secret text" credential: set API_KEY_CREDENTIALS_ID. The key is passed to the
+//      agent process as an environment variable (needs the Credentials Binding plugin).
+//
+// Source: by default a small sample project with a bug is generated; set USE_SCM to use `checkout scm`
+// and adjust PULL_BACK to the paths the agent may change.
+
+def AGENTS = [
+    'claude-code' : [kit: 'claude-code',  keyEnv: 'ANTHROPIC_API_KEY',
+                     cmd: 'claude -p "$AGENT_PROMPT" --dangerously-skip-permissions'],
+    'codex'       : [kit: 'codex',        keyEnv: 'OPENAI_API_KEY',
+                     cmd: 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check "$AGENT_PROMPT"'],
+    'gemini'      : [kit: 'gemini',       keyEnv: 'GEMINI_API_KEY',
+                     cmd: 'gemini -p "$AGENT_PROMPT" --yolo'],
+    'opencode'    : [kit: 'opencode',     keyEnv: 'ANTHROPIC_API_KEY',
+                     cmd: 'opencode run "$AGENT_PROMPT"'],
+    'copilot'     : [kit: 'copilot',      keyEnv: 'GITHUB_TOKEN',
+                     cmd: 'copilot -p "$AGENT_PROMPT" --allow-all-tools'],
+    'cursor-agent': [kit: 'cursor-agent', keyEnv: 'CURSOR_API_KEY',
+                     cmd: 'cursor-agent -p "$AGENT_PROMPT" --force'],
+    'dry-run'     : [kit: 'shell',        keyEnv: null,
+                     cmd: 'sed -i "s/a - b/a + b/" src/math.sh && echo "dry-run: fixed src/math.sh"'],
+]
+
+properties([parameters([
+    choice(name: 'AGENT', choices: ['dry-run', 'claude-code', 'codex', 'gemini', 'opencode', 'copilot', 'cursor-agent'],
+           description: 'Coding agent (sandbox template) to run; dry-run (default) needs no AI and no key'),
+    text(name: 'PROMPT', defaultValue: 'Fix the bug in src/math.sh so that ./test.sh passes. Do not modify test.sh.',
+         description: 'Task for the agent'),
+    string(name: 'API_KEY_CREDENTIALS_ID', defaultValue: '',
+           description: 'Optional Jenkins "Secret text" credential with the agent API key; empty = Docker secret store'),
+    booleanParam(name: 'USE_SCM', defaultValue: false, description: 'Use `checkout scm` instead of the generated sample'),
+    string(name: 'PULL_BACK', defaultValue: 'src/**,test.sh',
+           description: 'Files copied back from the sandbox into the workspace (comma-separated globs)'),
+    string(name: 'TEST_COMMAND', defaultValue: './test.sh', description: 'Run in the sandbox after the agent; empty = skip'),
+])])
+
+node {
+    def agentName = params.AGENT ?: 'dry-run'
+    def agent = AGENTS[agentName]
+    if (agent == null) {
+        error "Unknown AGENT '${agentName}'"
+    }
+
+    stage('Prepare code') {
+        if (params.USE_SCM) {
+            checkout scm
+        } else {
+            deleteDir()
+            writeFile file: 'src/math.sh', text: '''#!/usr/bin/env bash
+# add A B: prints A + B
+add() { local a=$1 b=$2; echo $((a - b)); }
+'''
+            writeFile file: 'test.sh', text: '''#!/usr/bin/env bash
+set -e
+source src/math.sh
+[ "$(add 2 3)" = 5 ] || { echo "FAIL: add 2 3 = $(add 2 3), expected 5"; exit 1; }
+echo "PASS: add 2 3 = 5"
+'''
+        }
+    }
+
+    stage("Agent '${agentName}' in a sandbox") {
+        def runAgent = { List<String> extraEnv ->
+            sandboxRun(
+                kit: agent.kit,                       // docker/sandbox-templates:<kit>
+                size: 'medium',
+                timeoutMinutes: 30,
+                excludes: '.git/**,node_modules/**,target/**,build/**',
+                env: ["AGENT_PROMPT=${params.PROMPT}", "AGENT_CMD=${agent.cmd}",
+                      "TEST_COMMAND=${params.TEST_COMMAND ?: ''}"] + extraEnv,
+                script: '''
+                    set -o pipefail
+                    chmod +x test.sh 2>/dev/null || true
+                    # baseline so the agent's changes can be exported as a patch
+                    git init -q . && git add -A && git -c user.name=jenkins -c user.email=jenkins@localhost commit -qm baseline
+
+                    echo "== running agent: $AGENT_CMD"
+                    bash -c "$AGENT_CMD" 2>&1 | tee agent.log
+
+                    git add -A ':!agent.log'
+                    git diff --cached --stat
+                    git diff --cached > agent.patch
+
+                    if [ -n "$TEST_COMMAND" ]; then
+                        echo "== test: $TEST_COMMAND"
+                        bash -c "$TEST_COMMAND" 2>&1 | tee test.log
+                    fi
+                ''',
+                // pulled back into the Jenkins workspace (overwrites the local copies)
+                artifacts: "${params.PULL_BACK ?: 'src/**'},agent.patch,agent.log,test.log"
+            )
+        }
+        if (agent.keyEnv && params.API_KEY_CREDENTIALS_ID) {
+            withCredentials([string(credentialsId: params.API_KEY_CREDENTIALS_ID, variable: 'AGENT_API_KEY')]) {
+                runAgent(["${agent.keyEnv}=${AGENT_API_KEY}"])
+            }
+        } else {
+            runAgent([])
+        }
+    }
+
+    stage('Review what came back') {
+        def patch = readFile('agent.patch')
+        echo patch.trim() ? "Changes made by ${agentName}:\n${patch}" : "${agentName} made no changes"
+        if (fileExists('test.log')) {
+            echo "Test output:\n${readFile('test.log')}"
+        }
+        archiveArtifacts artifacts: 'agent.patch,agent.log,test.log', allowEmptyArchive: true
+        // Next steps are up to you, e.g. commit and open a pull request:
+        //   sh 'git checkout -b agent/fix && git commit -am "Agent fix" && git push origin HEAD'
+    }
+}
