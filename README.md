@@ -27,6 +27,9 @@ giữa các tài khoản; xem phần [Hướng dẫn nhanh](#hướng-dẫn-nhan
 * Four load-balancing strategies: least loaded, round robin, weighted random, first available.
 * Builds wait for free capacity, and fail over to another account when one is out of quota or rejects the
   credentials (with a per-account cooldown).
+* **Persistent sandboxes**: `sandboxRun(persistent: 'name', ...)` keeps one long-lived sandbox across builds - it is
+  stopped (data kept) after each build and started again by the next one; `sandboxManage` checks, starts, stops or
+  deletes it.
 * The sandbox is deleted and the account slot released on every path (success, failure, timeout, abort); a periodic
   job removes orphaned sandboxes left behind by a controller crash.
 * A *Manage Jenkins > Docker Cloud Sandboxes* page with live usage, cooldowns and last errors per account.
@@ -96,7 +99,8 @@ A complete runnable pipeline that creates files locally, copies them into a sand
 pulls them back: [examples/round-trip/Jenkinsfile](examples/round-trip/Jenkinsfile). Let an AI coding agent (Claude Code,
 Codex, Gemini, OpenCode, Copilot, Cursor) edit your code in a sandbox and pull the changes back:
 [examples/ai-agent/Jenkinsfile](examples/ai-agent/Jenkinsfile). OpenCode with provider, model and API key chosen per
-build: [examples/opencode-byo-model/Jenkinsfile](examples/opencode-byo-model/Jenkinsfile).
+build: [examples/opencode-byo-model/Jenkinsfile](examples/opencode-byo-model/Jenkinsfile). A long-lived sandbox that keeps
+its state between builds: [examples/persistent-sandbox/Jenkinsfile](examples/persistent-sandbox/Jenkinsfile).
 
 More examples (Maven with artifacts, pinning, parallel builds across accounts) and the full parameter reference are in
 [docs/usage.md](docs/usage.md).

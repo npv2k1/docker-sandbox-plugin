@@ -182,8 +182,30 @@ first. The per-account counters restart from zero.
 
 * `WARNING: could not delete sandbox X (...); the orphan cleanup will retry`: deletion failed three times. It is retried
   by the cleanup job if the cleanup is enabled.
+* Persistent sandboxes (`jenkins-persistent` label) are never deleted by the cleanup; see [Persistent sandboxes](#persistent-sandboxes).
 * Sandboxes kept with `keepSandbox: true` carry the `jenkins-keep` label, are skipped by the cleanup and live until their TTL.
   Delete them manually in your Docker account if needed.
+
+## Persistent sandboxes
+
+* **`Waiting for persistent sandbox 'x' (in use by ...)`**: another build (or a management action) is inside the same
+  persistent sandbox; builds with the same name run one after the other. It fails with `Persistent sandbox 'x' is in use
+  by ...` after *Wait for capacity* minutes. Abort the other build, or use a different name.
+* **`Sandbox ... is in failed state: ...`**: the persistent sandbox cannot be started. It is left as it is so that you can
+  look at it. Delete it with `sandboxManage(name: 'x', action: 'delete')` or on *Manage Jenkins > Docker Cloud Sandboxes*;
+  the next build creates a fresh one (the old data is gone).
+* **`Cannot tell whether persistent sandbox 'x' exists`**: an account could not be listed (credentials, network) and the
+  sandbox was not found elsewhere. The build refuses to create a possible duplicate. Fix the account, or pin the build to
+  the account that holds the sandbox with `account: '...'`.
+* **Start or resume takes long**: a stop takes about a minute and a start about 15 seconds on the live service; a build
+  that starts right after another one waits for `stopped` and then for `running` (up to 5 minutes).
+* **Quota errors with few builds**: stopped sandboxes keep their storage and count toward the stored-sandbox quota
+  (default 50). List them on the management page and delete the ones you do not need.
+* **`WARNING: could not stop persistent sandbox ...`**: the stop request failed three times; the sandbox keeps running
+  until its TTL stops it (persistent sandboxes are created with `onTimeout: stop`). Stop it on the management page.
+* **The sandbox stopped in the middle of a build**: `ttlMinutes` (default 60) is the lifetime of one run; when it
+  expires the service stops the sandbox. Raise `ttlMinutes` when creating it.
+* A persistent sandbox that was **deleted outside Jenkins** is simply created again by the next build.
 
 ## Still stuck?
 

@@ -6,14 +6,15 @@ All code is in the package `io.jenkins.plugins.dockersandbox` (`src/main/java/..
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| API clients | `api/` | `DockerSandboxApi` / `HttpDockerSandboxApi` (management API: create, get, list, delete sandboxes, endpoint credentials), `SandboxEndpointApi` / `HttpSandboxEndpointApi` (per-sandbox endpoint: exec, processes, signals, file upload/download), `TokenProvider` (PAT exchange and token cache), `HttpCaller` (bearer auth, one refresh on 401, bounded retries on 429/502/503/504 honoring `Retry-After`), `SandboxApiException` (error mapping). `api/model/` holds the JSON records |
+| API clients | `api/` | `DockerSandboxApi` / `HttpDockerSandboxApi` (management API: create, get, list, start, stop, delete sandboxes, endpoint credentials), `SandboxEndpointApi` / `HttpSandboxEndpointApi` (per-sandbox endpoint: exec, processes, signals, file upload/download), `TokenProvider` (PAT exchange and token cache), `HttpCaller` (bearer auth, one refresh on 401, bounded retries on 429/502/503/504 honoring `Retry-After`), `SandboxApiException` (error mapping). `api/model/` holds the JSON records |
 | Accounts | `account/` | `SandboxAccount` (one Docker account), `AccountPool` (leases and capacity under a single lock), `AccountSelector` (pin/labels/exclusions), `LoadBalancingStrategy`, `AccountState` (in-memory counters and cooldown), `AccountApiFactory` (credentials lookup, token provider cache, connection test) |
 | Global configuration | `DockerSandboxGlobalConfiguration` | *Manage Jenkins > System* form, defaults, instance id; owns the `AccountPool` |
 | Runner | `SandboxJobRunner` | The whole run: lease, create, wait, upload, execute, stream, artifacts, delete. Shared by the step and the builder |
 | Run description | `SandboxRunSpec`, `SandboxSize`, `SandboxRunResult` | Normalized options, named sizes, the value returned by the step |
 | Pipeline step | `SandboxRunStep` | `sandboxRun`, a synchronous non-blocking step execution |
 | Freestyle builder | `SandboxBuilder` | *Run script in Docker Cloud Sandbox* build step (`sandboxBuild`) |
-| Orphan cleanup | `OrphanSandboxCleanup` | `AsyncPeriodicWork`, every 10 minutes |
+| Persistent sandboxes | `PersistentSandboxes`, `PersistentSandboxLocks`, `SandboxManageStep` | Lookup of `jkp-<name>` sandboxes across accounts (only with this Jenkins' `jenkins-instance` label), start/stop/delete helpers, the in-JVM per-name lock, and the `sandboxManage` step |
+| Orphan cleanup | `OrphanSandboxCleanup` | `AsyncPeriodicWork`, every 10 minutes; skips `jenkins-keep` and `jenkins-persistent` sandboxes |
 | Management page | `DockerSandboxManagementLink` | *Manage Jenkins > Docker Cloud Sandboxes* with live usage and connection test |
 | Backend seam | `SandboxBackend` | Factory for the two API clients; tests replace it with the WireMock-backed fake |
 
@@ -39,6 +40,22 @@ All code is in the package `io.jenkins.plugins.dockersandbox` (`src/main/java/..
 10. **Fetch artifacts**: a `bash` command with `globstar nullglob` expands the patterns and packs the files into
     `/tmp/jenkins-out.tgz`; Jenkins downloads and extracts it into the workspace.
 11. **Delete the sandbox** (up to 3 attempts) unless `keepSandbox` is set, then release the lease.
+
+### Persistent sandboxes
+
+With `persistent: '<name>'` the sequence changes around steps 2-4 and 11 (see [Persistent sandboxes](usage.md#persistent-sandboxes)):
+
+* **Before the lease** the build takes the per-name lock (`PersistentSandboxLocks`, keyed by instance id and name; a
+  waiting build logs once and is abortable, bounded by *Wait for capacity*).
+* **Find.** `PersistentSandboxes.find` lists the sandboxes of every enabled matching account and picks the one with
+  display name `jkp-<name>` and this Jenkins' `jenkins-instance` label (`deleting` ones are ignored). If an account
+  cannot be listed and nothing is found elsewhere the build aborts instead of risking a duplicate. A hit leases that
+  account; otherwise the normal strategy and failover create it (`onTimeout: stop`, label `jenkins-persistent`).
+* **Resume.** `stopping` waits for `stopped`, `stopped` gets `POST /v1/sandboxes/{id}/start` (`If-Match` = current
+  `core.etag`, one retry on 412/428), `running` is used as is, `failed` aborts with a delete hint.
+* **After the run** (`finally`): `stop` sends `POST .../stop` (not awaiting `stopped`), `keep` does nothing, `delete`
+  uses the normal delete. A sandbox this build created but that never became running is deleted so that the name stays
+  usable; a reused one that cannot start is left for the user to delete. The lease and the lock are always released.
 
 If the build is aborted, the process receives `kill` and the sandbox is still deleted. If deletion fails the build log
 says so and the [orphan cleanup](configuration.md#orphan-cleanup) retries later.

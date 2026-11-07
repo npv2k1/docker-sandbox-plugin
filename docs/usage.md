@@ -30,7 +30,9 @@ Only `script` is required; every other parameter is optional.
 | `allowEmptyArtifacts` | `boolean` | `true` | If no file matches `artifacts`: `true` logs a warning, `false` fails the build |
 | `env` | `List<String>` | `[]` | `NAME=value` entries set for the script process only (not stored on the sandbox) |
 | `timeoutMinutes` | `int` | `60` | Terminates the script after this many minutes (TERM, then KILL) and fails the build. `0` disables the limit |
-| `keepSandbox` | `boolean` | `false` | Do not delete the sandbox at the end; it expires with its TTL. Such sandboxes are never touched by the orphan cleanup |
+| `keepSandbox` | `boolean` | `false` | Do not delete the sandbox at the end; it expires with its TTL. Such sandboxes are never touched by the orphan cleanup. Same as `afterRun: 'keep'` |
+| `persistent` | `String` | `''` | Name of a long-lived sandbox that later builds reuse. Empty = a normal one-shot sandbox. See [Persistent sandboxes](#persistent-sandboxes) |
+| `afterRun` | `String` | `stop` if `persistent` is set, else `delete` | What happens to the sandbox after the run: `stop` (keep data, stop compute; needs `persistent`), `keep` (leave it running) or `delete` |
 | `returnStatus` | `boolean` | `false` | Return the exit code instead of failing the build on a non-zero exit |
 
 ### Custom Docker images
@@ -72,6 +74,7 @@ Notes on the patterns:
 | `exitCode` | `int` | Exit code of the script (always `0` unless `returnStatus: true`, because otherwise the step fails first) |
 | `accountId` | `String` | Account id the sandbox was created on |
 | `sandboxId` | `String` | Id of the sandbox (useful with `keepSandbox: true`) |
+| `persistent` | `String` | Name of the persistent sandbox, or an empty string for a one-shot sandbox |
 
 ### What fails the build
 
@@ -80,6 +83,94 @@ Notes on the patterns:
 * No usable account, capacity wait timeout, sandbox creation or start failures, upload/limit errors, invalid
   parameters. See [Troubleshooting](troubleshooting.md).
 * A Jenkins restart while the step runs; the sandbox is cleaned up by the [orphan cleanup](configuration.md#orphan-cleanup).
+
+## Persistent sandboxes
+
+A normal sandbox lives for one build. A **persistent** sandbox survives the build: afterwards it is **stopped, not
+deleted**, its data stays, and later builds **reuse the same sandbox**. Use it for long-running or multi-step work
+where installed tools, a cloned project, caches or build state should be there next time.
+
+```groovy
+node {
+  def r = sandboxRun(persistent: 'my-project', script: '''
+      [ -d project ] || git clone https://example.com/me/project.git project   # first build only
+      cd project && git pull && make test
+  ''')
+  echo "ran in ${r.persistent} (${r.sandboxId})"
+}
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `persistent` | `''` | Name (`[A-Za-z0-9_-]`, 1-40 characters) of the long-lived sandbox. Empty = one-shot behavior |
+| `afterRun` | `stop` if persistent, else `delete` | `stop` keeps the data and stops the compute, `keep` leaves the sandbox running, `delete` removes it. `keepSandbox: true` means `keep` |
+
+The remaining options (`account`, `accountLabel`, `uploadWorkspace`, `artifacts`, `env`, `timeoutMinutes`, ...) work as
+before. `image`, `kit`, `size` and `ttlMinutes` only apply when the sandbox is **created**; a later build with other
+values reuses the existing sandbox unchanged (delete it to get a new one).
+
+### Flow
+
+1. The build takes the **per-name lock** (see concurrency below).
+2. It **looks for** a sandbox with the display name `jkp-<name>` and this Jenkins' `jenkins-instance` label on every
+   enabled account that matches `account` / `accountLabel`. Found: that account is leased (the build waits for capacity
+   there). Not found: an account is chosen as usual (with failover) and the sandbox is created with the display name
+   `jkp-<name>`, the labels `jenkins-instance`, `jenkins-persistent=<name>` and `jenkins-account`, and
+   `features.timeouts` set to `ttlMinutes` with `onTimeout: stop`.
+3. It is **resumed**: `stopping` waits for `stopped`; `stopped` is started (about 15 s on the live service) and the build
+   waits for `running`; `running` is used as is; `failed` aborts the build with the failure message and a hint to delete
+   the sandbox.
+4. The workspace is uploaded (if `uploadWorkspace`) and **extracted over** the existing work directory: files with the
+   same name are replaced, all other files stay. The script runs and artifacts are fetched as usual.
+5. In all cases (success, script failure, abort) `afterRun` is applied: `stop` sends the stop request without waiting for
+   `stopped` (a stop takes about a minute on the live service); the next build waits if it needs to. The lease and the
+   lock are released.
+
+Log lines: `Created persistent sandbox jkp-x (sbx_...) on account 'a'`,
+`Reusing persistent sandbox jkp-x (sbx_...) on account a, status stopped -> starting`,
+`Stopping persistent sandbox jkp-x (sbx_...) (data kept)`.
+
+### Costs and quota
+
+A stopped sandbox does not run (no compute), but it **keeps its storage and counts toward the account's stored-sandbox
+quota** (default 50). Delete persistent sandboxes you no longer need. `ttlMinutes` is the lifetime of one run: when it
+expires the service **stops** a persistent sandbox (instead of deleting it), so choose it longer than your longest build.
+
+### Concurrency
+
+Builds that use the same name never run inside the sandbox at the same time: a second build logs
+`Waiting for persistent sandbox '<name>' (in use by <run>)` and continues when the first one is done (abortable, at most
+*Wait for capacity* minutes). The lock lives in the Jenkins JVM, so it covers one controller; do not share persistent
+names of one Docker account between several Jenkins instances (sandboxes of another Jenkins are never touched anyway,
+because they lack this instance's `jenkins-instance` label). Different names run in parallel.
+
+### Managing and deleting persistent sandboxes
+
+The step `sandboxManage(name:, action:, account: '')` works on a persistent sandbox from a pipeline:
+
+| `action` | Effect | Returns |
+| --- | --- | --- |
+| `status` | read the status | `running`, `stopped`, `stopping`, `failed`, ... or `absent` |
+| `start` | start it and wait until it is running | `running` (fails if there is no such sandbox) |
+| `stop` | send the stop request (does not wait) | `stopping` (or `stopped`); `absent` if there is none |
+| `delete` | delete the sandbox and its data | `deleted`, or `absent` if there was nothing to delete |
+
+`account` restricts the lookup to one account. Everything except `status` takes the per-name lock first, so it waits for
+a running build. Examples:
+
+```groovy
+sandboxManage name: 'my-project', action: 'delete'              // clean up at the end of a pipeline
+def s = sandboxManage name: 'my-project', action: 'status'      // 'absent' if it does not exist
+```
+
+*Manage Jenkins > Docker Cloud Sandboxes* lists the persistent sandboxes of this Jenkins per account (name, status,
+created, account) with **Stop** and **Delete** buttons (administrator only, POST). A sandbox that a build is using
+cannot be stopped or deleted there. The [orphan cleanup](configuration.md#orphan-cleanup) never deletes persistent
+sandboxes.
+
+See [`examples/persistent-sandbox/Jenkinsfile`](../examples/persistent-sandbox/Jenkinsfile): build 1 sets up a project
+and a tool and writes a counter, later builds reuse them and increment the counter, a report is pulled back each time,
+and the parameter `DELETE_SANDBOX` removes the sandbox at the end via `sandboxManage`.
 
 ## Freestyle build step
 
@@ -106,6 +197,8 @@ Under **Advanced**:
 | Workspace includes / excludes | `includes` / `excludes` | `**/*` / empty |
 | Environment variables (NAME=value per line) | `env` | empty (one entry per line, blank lines ignored) |
 | Keep sandbox after the build | `keepSandbox` | unchecked |
+| Persistent sandbox name | `persistent` | empty |
+| After the run (stop, keep, delete) | `afterRun` | (default) |
 | Do not fail on non-zero exit (mark unstable) | `returnStatus` | unchecked; a non-zero exit marks the build **UNSTABLE** |
 | Allow empty artifacts | `allowEmptyArtifacts` | checked |
 | Work directory in the sandbox | `workDir` | empty (`/home/agent/workspace` with a kit, `/tmp/workspace` with an image) |

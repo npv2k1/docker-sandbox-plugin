@@ -110,6 +110,9 @@ slot (`active < max`) are candidates.
 * **Failover.** The build then retries on another matching account, up to *Maximum failover attempts* attempts in
   total. Accounts that already failed for this build are not tried again. When none is left the build fails with
   `No Docker sandbox account left to fail over to` or `Could not create a Docker sandbox on any account ...`.
+* **Persistent sandboxes.** An existing persistent sandbox is leased on the account that holds it; the build waits for
+  capacity there instead of failing over. Only a new one is created with failover. The per-name wait for another build
+  uses the same *Wait for capacity* limit.
 * **No failover after the sandbox exists.** A failing script, a timeout, an upload error and similar problems fail the
   build without trying another account. Other errors while creating the sandbox also fail the build directly.
 * **Counters** (active sandboxes, totals, cooldowns) are kept in memory only and start from zero after a controller
@@ -119,12 +122,13 @@ slot (`active < max`) are candidates.
 ## Orphan cleanup
 
 Every sandbox created by the plugin carries these labels: `jenkins-instance`, `jenkins-job`, `jenkins-build`,
-`jenkins-run`, `jenkins-account` (and `jenkins-keep` when `keepSandbox` is set). If the controller crashes, sandboxes may
+`jenkins-run`, `jenkins-account` (and `jenkins-keep` when `keepSandbox` is set; persistent sandboxes carry `jenkins-persistent=<name>` instead). If the controller crashes, sandboxes may
 outlive their builds. A periodic job (*Docker sandbox orphan cleanup*, every 10 minutes) lists the sandboxes of every
 configured account and deletes those that
 
 * carry this Jenkins' `jenkins-instance` id,
-* do **not** carry `jenkins-keep`,
+* do **not** carry `jenkins-keep` or `jenkins-persistent` (persistent sandboxes are long-lived by design and are only
+  removed by `afterRun: 'delete'`, `sandboxManage` or the management page),
 * belong to a build that is no longer running (or whose job is gone), and
 * were created more than 15 minutes ago.
 
@@ -135,6 +139,11 @@ Disable it with *Delete orphaned sandboxes of this Jenkins* (Advanced). Sandboxe
 *Manage Jenkins > Docker Cloud Sandboxes* (Administer permission required) shows the active strategy and, per account:
 enabled flag, active / max sandboxes, labels, remaining cooldown, last error, total runs, total failures and the
 result of the last connection test, with a button to test the connection again.
+
+Below the table, **Persistent sandboxes** lists the long-lived sandboxes of this Jenkins on every enabled account (name,
+status, created, account, sandbox id) with **Stop** and **Delete** buttons (POST, Administer permission). A sandbox that
+a running build holds cannot be stopped or deleted from here. Stopped persistent sandboxes keep their storage and count
+toward the account's stored-sandbox quota (default 50). See [Persistent sandboxes](usage.md#persistent-sandboxes).
 
 ## Configuration as Code
 

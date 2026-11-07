@@ -13,6 +13,7 @@ import io.jenkins.plugins.dockersandbox.account.SandboxAccount;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import hudson.model.BooleanParameterValue;
 import hudson.model.ParametersAction;
 import hudson.model.PasswordParameterValue;
 import hudson.model.Result;
@@ -84,6 +85,48 @@ class ExamplePipelineTest {
         assertTrue(b.getArtifactManager().root().child("app/config.properties").isFile());
         assertTrue(b.getArtifactManager().root().child("report/test-report.txt").isFile());
         assertEquals(0, cloud.liveSandboxes(), "sandbox must be deleted");
+    }
+
+    @Test
+    void persistentSandboxExampleReusesTheSandboxAndDeletesItOnRequest(JenkinsRule r) throws Exception {
+        setUpCloud(r);
+        WorkflowJob job = r.createProject(WorkflowJob.class);
+        job.setDefinition(new CpsFlowDefinition(Files.readString(Path.of("examples/persistent-sandbox/Jenkinsfile")), true));
+
+        // build 1 (also defines the parameters): creates the sandbox and sets up the project
+        WorkflowRun first = r.buildAndAssertSuccess(job);
+        r.assertLogContains("first use of this sandbox", first);
+        r.assertLogContains("counter=1", first);
+        r.assertLogContains("setup_build=1", first);
+        r.assertLogContains("tool=greet: hello build-1", first);
+        r.assertLogContains("Created persistent sandbox jkp-demo-project (sb1)", first);
+        assertTrue(first.getArtifactManager().root().child("report/summary.txt").isFile());
+        assertEquals(1, cloud.liveSandboxes(), "the sandbox is stopped, not deleted");
+        assertEquals(List.of("sb1"), cloud.stoppedIds());
+        assertTrue(cloud.deletedIds().isEmpty());
+
+        // build 2: the same sandbox is reused, state from build 1 is still there, the counter grows
+        WorkflowRun second = r.buildAndAssertSuccess(job);
+        r.assertLogContains("Reusing persistent sandbox jkp-demo-project (sb1)", second);
+        r.assertLogContains("reusing the sandbox that was set up in build 1", second);
+        r.assertLogContains("counter=2", second);
+        r.assertLogContains("setup_build=1", second);
+        r.assertLogContains("this_build=2", second);
+        assertEquals(List.of("sb1"), cloud.startedIds());
+        assertEquals(1, cloud.liveSandboxes());
+        assertTrue(second.getArtifactManager().root().child("report/summary.txt").isFile());
+        assertEquals(1, cloud.account("user1").createAttempts.get());
+
+        // build 3: DELETE_SANDBOX removes it at the end via sandboxManage
+        WorkflowRun third = r.assertBuildStatusSuccess(job.scheduleBuild2(0, new ParametersAction(
+                new StringParameterValue("SANDBOX_NAME", "demo-project"),
+                new BooleanParameterValue("DELETE_SANDBOX", true))));
+        r.assertLogContains("counter=3", third);
+        r.assertLogContains("delete: deleted; status now: absent", third);
+        assertEquals(List.of("sb1"), cloud.deletedIds());
+        assertEquals(0, cloud.liveSandboxes());
+        assertEquals(0, DockerSandboxGlobalConfiguration.get().getPool().stateOf("acc-1").getActive());
+        r.assertLogNotContains("dckr_pat_EXAMPLE", third);
     }
 
     @Test

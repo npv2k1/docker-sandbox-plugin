@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Persistent (long-lived) sandboxes**: `sandboxRun(persistent: 'name', afterRun: 'stop'|'keep'|'delete')` (and the
+  same options in the Freestyle step). The first build creates the sandbox `jkp-<name>`; after the run it is stopped
+  with its data instead of deleted, and later builds find it on any account, start it and reuse it. Builds with the
+  same name run one after the other (per-name lock, abortable). `keepSandbox: true` keeps its meaning (`afterRun: 'keep'`).
+  `SandboxRunResult.persistent`, API client `startSandbox` / `stopSandbox` (etag from `core.etag`, one retry on 412/428).
+- Pipeline step `sandboxManage(name:, action: 'status'|'start'|'stop'|'delete', account: '')`.
+- Management page: *Persistent sandboxes* table with Stop / Delete buttons. The orphan cleanup never deletes
+  `jenkins-persistent` sandboxes and nothing ever stops or deletes a sandbox without this Jenkins' `jenkins-instance` label.
+- `examples/persistent-sandbox/Jenkinsfile` (state kept across builds, report pulled back, optional delete), run
+  unchanged by the test suite, and an opt-in live test.
 - OpenCode example: `anthropic-compatible` provider for gateways that speak the Anthropic Messages API.
 - `LiveDockerCloudTest` (opt-in, reads credentials from the environment / `.env`) and `.env.example`.
 

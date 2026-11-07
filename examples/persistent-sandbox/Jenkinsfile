@@ -1,0 +1,93 @@
+// Persistent sandbox: one long-lived sandbox that survives between builds.
+//
+//   build 1: creates the sandbox 'demo-project', sets up a project and "installs" a tool in it, writes a counter
+//   build N: finds the sandbox, starts it if it was stopped, reuses the project and the tool, increments the counter
+//   every build: a report is pulled back into the Jenkins workspace and archived
+//   the sandbox is STOPPED after each build (data kept, compute not running); tick DELETE_SANDBOX to remove it
+//
+// Requirements: the docker-sandbox plugin with at least one account (Manage Jenkins > System > Docker Cloud Sandboxes).
+// Stopped sandboxes keep their storage and count toward the account's stored-sandbox quota, so delete the ones you
+// no longer need (DELETE_SANDBOX, `sandboxManage ... action: 'delete'`, or Manage Jenkins > Docker Cloud Sandboxes).
+// Builds that use the same name run one after the other. This exact file is executed by the plugin's test suite
+// (ExamplePipelineTest).
+
+properties([parameters([
+    string(name: 'SANDBOX_NAME', defaultValue: 'demo-project',
+           description: 'Name of the persistent sandbox (letters, digits, _ and -, at most 40 characters)'),
+    booleanParam(name: 'DELETE_SANDBOX', defaultValue: false,
+                 description: 'Delete the persistent sandbox (and all its data) at the end of this build'),
+])])
+
+// the first build of a new job runs before the parameters exist: fall back to the defaults
+String sandboxName = params.SANDBOX_NAME ?: 'demo-project'
+boolean deleteAtEnd = params.DELETE_SANDBOX ? true : false
+
+node {
+    stage('1. Prepare the input') {
+        deleteDir()   // start from an empty Jenkins workspace
+        writeFile file: 'input/build.txt', text: "uploaded by Jenkins build ${env.BUILD_NUMBER}\n"
+    }
+
+    stage('2. Run in the persistent sandbox') {
+        def result = sandboxRun(
+            persistent: sandboxName,                 // find the sandbox 'jkp-<name>', or create it on the first build
+            afterRun: deleteAtEnd ? 'keep' : 'stop', // 'stop' = keep the data, stop the compute (the default)
+            // the upload is extracted over the existing work directory: same-named files are replaced, the
+            // project, the tool and the counter from earlier builds stay
+            uploadWorkspace: true,
+            includes: 'input/**',
+            env: ["BUILD_NUMBER=${env.BUILD_NUMBER}"],
+            artifacts: 'report/**',                  // pulled back after every build
+            timeoutMinutes: 10,
+            script: '''
+                mkdir -p state report
+                if [ ! -f state/setup-done ]; then
+                  echo "== first use of this sandbox: creating the project and installing a tool"
+                  mkdir -p project .tools
+                  printf 'name=demo\\nversion=1\\n' > project/app.properties
+                  printf '#!/usr/bin/env bash\\necho "greet: hello $1"\\n' > .tools/greet
+                  chmod +x .tools/greet
+                  echo "$BUILD_NUMBER" > state/setup-build
+                  touch state/setup-done
+                else
+                  echo "== reusing the sandbox that was set up in build $(cat state/setup-build)"
+                fi
+
+                count=$(( $(cat state/counter 2>/dev/null || echo 0) + 1 ))
+                echo "$count" > state/counter
+                echo "== this sandbox has now run $count build(s); input: $(cat input/build.txt)"
+                ls -A
+
+                {
+                  echo "setup_build=$(cat state/setup-build)"
+                  echo "this_build=$BUILD_NUMBER"
+                  echo "counter=$count"
+                  echo "tool=$(.tools/greet build-$BUILD_NUMBER)"
+                  echo "project=$(tr '\\n' ' ' < project/app.properties)"
+                } > report/summary.txt
+                cat report/summary.txt
+            '''
+        )
+        echo "ran in persistent sandbox '${result.persistent}' (${result.sandboxId}) on account ${result.accountId}"
+    }
+
+    stage('3. Check the report') {
+        String summary = readFile('report/summary.txt')
+        echo "Report:\n${summary}"
+        String counterLine = summary.readLines().find { it.startsWith('counter=') }
+        int counter = counterLine.split('=')[1].toInteger()
+        if (counter < 1 || !summary.contains("this_build=${env.BUILD_NUMBER}")) {
+            error 'the report does not match this build'
+        }
+        archiveArtifacts artifacts: 'report/**', fingerprint: true
+        echo "persistent sandbox '${sandboxName}': ${sandboxManage(name: sandboxName, action: 'status')}, " +
+             "counter ${counter} (it grows with every build that reuses the sandbox)"
+    }
+
+    if (deleteAtEnd) {
+        stage('4. Delete the persistent sandbox') {
+            String outcome = sandboxManage(name: sandboxName, action: 'delete')
+            echo "delete: ${outcome}; status now: ${sandboxManage(name: sandboxName, action: 'status')}"
+        }
+    }
+}

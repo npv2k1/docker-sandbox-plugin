@@ -8,6 +8,7 @@ import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.CredentialsStore;
 import com.cloudbees.plugins.credentials.domains.Domain;
 import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
+import hudson.model.BooleanParameterValue;
 import hudson.model.ParametersAction;
 import hudson.model.PasswordParameterValue;
 import hudson.model.StringParameterValue;
@@ -56,6 +57,56 @@ class LiveDockerCloudTest {
         WorkflowRun b = run(job("examples/round-trip/Jenkinsfile"));
         r.assertLogContains("greet.sh says: Xin chao, round-trip!", b);
         r.assertLogContains("status=PASS", b);
+        assertReleased();
+    }
+
+    /**
+     * Two builds share state in one persistent sandbox on the real service, then the sandbox is deleted. Needs a few
+     * minutes: a real stop takes about a minute and a start about 15 seconds. Always cleans up the sandbox it made.
+     */
+    @Test
+    void persistentSandboxKeepsStateAcrossBuildsOnTheLiveService() throws Exception {
+        String name = "live-" + Long.toString(System.currentTimeMillis(), 36);
+        String displayName = "jkp-" + name;
+        WorkflowJob job = job("examples/persistent-sandbox/Jenkinsfile");
+        // define the parameters up front so that even build 1 gets the unique name (the example would otherwise
+        // fall back to its default name 'demo-project' on a job's very first build)
+        job.addProperty(new hudson.model.ParametersDefinitionProperty(
+                new hudson.model.StringParameterDefinition("SANDBOX_NAME", "demo-project"),
+                new hudson.model.BooleanParameterDefinition("DELETE_SANDBOX", false, "")));
+        try {
+            WorkflowRun first = r.assertBuildStatusSuccess(job.scheduleBuild2(0, new ParametersAction(
+                    new StringParameterValue("SANDBOX_NAME", name), new BooleanParameterValue("DELETE_SANDBOX", false))));
+            System.out.println("=== LIVE PERSISTENT BUILD 1\n" + JenkinsRule.getLog(first));
+            r.assertLogContains("counter=1", first);
+            r.assertLogContains("Created persistent sandbox " + displayName, first);
+            WorkflowRun second = r.assertBuildStatusSuccess(job.scheduleBuild2(0, new ParametersAction(
+                    new StringParameterValue("SANDBOX_NAME", name), new BooleanParameterValue("DELETE_SANDBOX", false))));
+            System.out.println("=== LIVE PERSISTENT BUILD 2\n" + JenkinsRule.getLog(second));
+            r.assertLogContains("Reusing persistent sandbox " + displayName, second);
+            r.assertLogContains("reusing the sandbox that was set up in build 1", second);
+            r.assertLogContains("counter=2", second);
+            r.assertLogNotContains(System.getenv("DOCKER_PAT"), second);
+
+            WorkflowRun third = r.assertBuildStatusSuccess(job.scheduleBuild2(0, new ParametersAction(
+                    new StringParameterValue("SANDBOX_NAME", name), new BooleanParameterValue("DELETE_SANDBOX", true))));
+            System.out.println("=== LIVE PERSISTENT BUILD 3\n" + JenkinsRule.getLog(third));
+            r.assertLogContains("counter=3", third);
+            r.assertLogContains("delete: deleted; status now: absent", third);
+        } finally {
+            // never leave a stored sandbox behind, even when an assertion above failed
+            SandboxAccount account = DockerSandboxGlobalConfiguration.get().getAccounts().get(0);
+            var api = SandboxBackend.DEFAULT.management(account);
+            for (var sandbox : api.listAllSandboxes()) {
+                if (displayName.equals(sandbox.displayName())) {
+                    api.deleteSandbox(sandbox.id(), true);
+                }
+            }
+        }
+        for (var sandbox : SandboxBackend.DEFAULT.management(DockerSandboxGlobalConfiguration.get().getAccounts().get(0))
+                .listAllSandboxes()) {
+            org.junit.jupiter.api.Assertions.assertNotEquals(displayName, sandbox.displayName(), "sandbox leaked");
+        }
         assertReleased();
     }
 
