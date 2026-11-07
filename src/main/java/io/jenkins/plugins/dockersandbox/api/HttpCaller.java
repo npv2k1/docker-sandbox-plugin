@@ -3,11 +3,13 @@ package io.jenkins.plugins.dockersandbox.api;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import hudson.ProxyConfiguration;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.net.ConnectException;
+import java.net.ProxySelector;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpHeaders;
@@ -15,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Function;
+import jenkins.model.Jenkins;
 
 /**
  * Shared HTTP plumbing: bearer auth with one refresh on 401, bounded retries on 429/502/503/504 honoring
@@ -62,12 +65,27 @@ final class HttpCaller {
         }
     }
 
-    /** HTTP/1.1 only: avoids h2c upgrade attempts on plain-http endpoints (tests, proxies). */
+    /**
+     * Proxy-aware client. Uses the proxy configured in Jenkins (Manage Jenkins > Plugins > Advanced, including
+     * no-proxy hosts and proxy authentication) when there is one, otherwise the JVM default {@link ProxySelector}
+     * ({@code -Dhttps.proxyHost} etc.). HTTP/1.1 only: avoids h2c upgrade attempts on plain-http endpoints.
+     */
     static HttpClient newClient() {
-        return HttpClient.newBuilder()
+        return proxiedBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
+    }
+
+    private static HttpClient.Builder proxiedBuilder() {
+        Jenkins jenkins = Jenkins.getInstanceOrNull();
+        ProxyConfiguration proxy = jenkins == null ? null : jenkins.getProxy();
+        if (proxy != null && proxy.getName() != null && !proxy.getName().isBlank()) {
+            return ProxyConfiguration.newHttpClientBuilder();
+        }
+        HttpClient.Builder builder = HttpClient.newBuilder();
+        ProxySelector selector = ProxySelector.getDefault();
+        return selector == null ? builder : builder.proxy(selector);
     }
 
     private final HttpClient client;

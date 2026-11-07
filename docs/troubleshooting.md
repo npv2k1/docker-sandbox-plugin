@@ -190,3 +190,14 @@ first. The per-account counters restart from zero.
 Collect the build console log (remove any secrets), the plugin version and the Jenkins version and
 [open an issue](https://github.com/npv2k1/docker-sandbox-plugin/issues/new/choose). For security problems follow
 [SECURITY.md](../SECURITY.md) instead.
+
+## Cannot reach Docker behind a proxy
+
+**Symptom.** *Test connection* or the build fails with a connect timeout / `ConnectException` to `hub.docker.com` or
+`connect.docker.com`.
+
+**Cause.** Jenkins needs a proxy to reach the internet.
+
+**Fix.** Configure it in *Manage Jenkins > Plugins > Advanced settings > HTTP Proxy Configuration* (the plugin uses it,
+including no-proxy hosts and proxy credentials), or start Jenkins with `-Dhttps.proxyHost=... -Dhttps.proxyPort=...`.
+Allow `hub.docker.com`, `connect.docker.com` and `*.sbx.sandboxes-cloud.docker.com` (the per-sandbox endpoints).

@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   sent by name only. Kits are now launched as their template image (`docker/sandbox-templates:<kit>`, for example
   `shell`). The whole flow (create, exec, upload, process output, artifacts download, delete) was verified against the
   live Docker Cloud Sandboxes service, both with the `shell` template and a raw `ubuntu:24.04` image.
+- HTTP calls ignored proxies: Jenkins behind an HTTP proxy could not reach Docker. The plugin now uses the proxy
+  configured in Jenkins (*Manage Jenkins > Plugins > Advanced > HTTP Proxy*, incl. no-proxy hosts and authentication),
+  falling back to the JVM proxy settings (`-Dhttps.proxyHost`).
 
 ## [1.0.0] - 2026-11-07
 
