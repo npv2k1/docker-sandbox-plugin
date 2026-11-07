@@ -4,7 +4,7 @@
 - Commit and push directly to `main`. Do NOT create feature branches or pull requests.
 - Before pushing: run `mvn -B -ntp verify` and make sure it passes.
 - After pushing: GitHub Actions `CI` runs on `main`; if it goes red, fix it with a new commit on `main`.
-- Release: Actions → Release → Run workflow (bump patch/minor/major), push tag `vX.Y.Z`, or push a commit to `main` with `[release]` / `[release:minor]` / `[release:major]` in its message (tag pushes and workflow dispatch are blocked from Claude sessions, so use the commit form there) (see docs/development.md "CI/CD").
+- Release: Actions → Release → Run workflow (bump patch/minor/major), push tag `vX.Y.Z`, or push a commit to `main` with `[release]` / `[release:minor]` / `[release:major]` in its FIRST LINE (never write these markers in a commit body) (tag pushes and workflow dispatch are blocked from Claude sessions, so use the commit form there) (see docs/development.md "CI/CD").
 
 ## Project
 - Jenkins plugin (Maven, Java 17), package `io.jenkins.plugins.dockersandbox`.

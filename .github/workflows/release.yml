@@ -5,8 +5,9 @@ name: Release
 #     computed from the latest vX.Y.Z tag; first release is 1.0.0), or set an exact version.
 #     Must run on main. The tag v<version> is created on the current main commit.
 #   - Or push a tag yourself: git tag v1.2.3 && git push origin v1.2.3
-#   - Or push a commit to main whose message contains [release] (patch), [release:minor] or
-#     [release:major]; the next version is computed like the manual run.
+#   - Or push a commit to main whose FIRST LINE (subject) contains [release] (patch),
+#     [release:minor] or [release:major]; the next version is computed like the manual run.
+#     Markers in the commit body are ignored.
 # Then: build + test with that version, publish a GitHub Release with the .hpi,
 # and optionally install it on your Jenkins (job "deploy", needs secrets, see README).
 on:
@@ -57,8 +58,14 @@ jobs:
         run: |
           semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
-            # [release] commit on main: bump taken from the commit message
-            case "$COMMIT_MSG" in
+            # Release commit on main: only the subject line counts
+            subject="${COMMIT_MSG%%$'\n'*}"
+            case "$subject" in
+              *"[release]"*|*"[release:minor]"*|*"[release:major]"*) ;;
+              *) echo "No release marker in the commit subject; nothing to release."
+                 echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            esac
+            case "$subject" in
               *"[release:major]"*) INPUT_BUMP=major ;;
               *"[release:minor]"*) INPUT_BUMP=minor ;;
               *) INPUT_BUMP=patch ;;
@@ -97,16 +104,19 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "### Releasing v$v" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/setup-java@v6
+      - if: steps.version.outputs.skip != 'true'
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
-      - name: Build release (tests + SpotBugs)
+      - if: steps.version.outputs.skip != 'true'
+        name: Build release (tests + SpotBugs)
         run: mvn -B -ntp verify -Drevision=${{ steps.version.outputs.version }} -Dchangelist=
 
-      - name: Create GitHub Release
+      - if: steps.version.outputs.skip != 'true'
+        name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -119,7 +129,8 @@ jobs:
           gh release create "$tag" "docker-sandbox-$VERSION.hpi" "docker-sandbox-$VERSION.hpi.sha256" \
             --target "$GITHUB_SHA" --title "$tag" --generate-notes $prerelease
 
-      - uses: actions/upload-artifact@v7
+      - if: steps.version.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: docker-sandbox-hpi-${{ steps.version.outputs.version }}
           path: docker-sandbox-*.hpi
@@ -128,6 +139,7 @@ jobs:
   deploy:
     name: Deploy to Jenkins
     needs: release
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Add required reviewers on this environment (Settings → Environments) to gate deploys.
