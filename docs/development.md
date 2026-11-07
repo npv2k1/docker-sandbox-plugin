@@ -68,11 +68,15 @@ docs/                           this documentation
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` (**CI**) | push to `main`, every pull request, manual | `mvn -B -ntp verify` (tests and SpotBugs) on JDK 17 and 21 (jobs `Build & test (JDK 17/21)`); uploads the `.hpi` (JDK 21) and, on failure, the surefire reports. PR runs are cancelled when superseded; runs on `main` never are |
-| `.github/workflows/release.yml` (**Release**) | manual run, or push of a tag `vX.Y.Z` | Resolves the version, builds with it, publishes a GitHub Release with `docker-sandbox-X.Y.Z.hpi` and `.sha256`, then runs the `deploy` job |
+| `.github/workflows/release.yml` (**Release**) | manual run, push of a tag `vX.Y.Z`, or a push to `main` whose commit message contains `[release]` | Resolves the version, builds with it, publishes a GitHub Release with `docker-sandbox-X.Y.Z.hpi` and `.sha256`, then runs the `deploy` job |
 | `.github/dependabot.yml` | weekly | Dependency PRs for Maven and GitHub Actions |
 | `.github/workflows/dependabot-automerge.yml` | `CI` finished successfully for a Dependabot PR | Merges that PR (only the exact commit CI tested) and deletes its branch. It runs from `main`'s copy and never checks out PR code. PRs that change `.github/workflows/*` (GitHub Actions bumps) need secret `AUTOMERGE_TOKEN` (fine-grained PAT: Contents, Pull requests, Workflows read/write) in both Actions and Dependabot secrets; without it they are left open with a warning |
 
 ### Releasing
+
+From a commit: push a commit to `main` whose message contains `[release]` (patch), `[release:minor]` or
+`[release:major]`, for example `git commit --allow-empty -m "Release [release]" && git push origin main`. The next
+version is computed from the latest tag exactly like the manual run. Other pushes to `main` do not release.
 
 Preferred: *Actions > Release > Run workflow* on `main` and choose **bump** `patch`, `minor` or `major`. The next version is
 computed from the latest `vX.Y.Z` tag (the first release is `1.0.0`) and the tag is created on the current `main` commit.

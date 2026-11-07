@@ -5,11 +5,14 @@ name: Release
 #     computed from the latest vX.Y.Z tag; first release is 1.0.0), or set an exact version.
 #     Must run on main. The tag v<version> is created on the current main commit.
 #   - Or push a tag yourself: git tag v1.2.3 && git push origin v1.2.3
+#   - Or push a commit to main whose message contains [release] (patch), [release:minor] or
+#     [release:major]; the next version is computed like the manual run.
 # Then: build + test with that version, publish a GitHub Release with the .hpi,
 # and optionally install it on your Jenkins (job "deploy", needs secrets, see README).
 on:
   push:
     tags: ['v*.*.*']
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
@@ -34,6 +37,8 @@ jobs:
     name: Build & publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # On pushes to main, only release when the commit message asks for it.
+    if: github.event_name != 'push' || github.ref_type == 'tag' || contains(github.event.head_commit.message, '[release')
     permissions:
       contents: write
     outputs:
@@ -48,9 +53,19 @@ jobs:
         env:
           INPUT_BUMP: ${{ inputs.bump }}
           INPUT_VERSION: ${{ inputs.version }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            # [release] commit on main: bump taken from the commit message
+            case "$COMMIT_MSG" in
+              *"[release:major]"*) INPUT_BUMP=major ;;
+              *"[release:minor]"*) INPUT_BUMP=minor ;;
+              *) INPUT_BUMP=patch ;;
+            esac
+            INPUT_VERSION=""
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_REF_TYPE" = "branch" ]; then
             if [ "$GITHUB_REF_NAME" != "main" ]; then
               echo "::error::Run the release from main (got '$GITHUB_REF_NAME')"; exit 1
             fi
