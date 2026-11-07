@@ -13,6 +13,7 @@ import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
 import hudson.model.FreeStyleBuild;
 import hudson.model.FreeStyleProject;
 import hudson.model.Result;
+import hudson.model.queue.QueueTaskFuture;
 import io.jenkins.plugins.dockersandbox.account.LoadBalancingStrategy;
 import io.jenkins.plugins.dockersandbox.account.SandboxAccount;
 import io.jenkins.plugins.dockersandbox.api.DockerSandboxApi;
@@ -283,16 +284,28 @@ class PersistentSandboxTest {
     @Test
     void parallelBuildsOnTheSameNameRunOneAfterTheOther() throws Exception {
         accounts(1, 10, LoadBalancingStrategy.LEAST_LOADED);
-        String script = "echo enter >> trace; sleep 1; echo exit >> trace";
+        // Deterministic: build A stays inside the sandbox until the test has seen build B waiting for the lock,
+        // then the test creates `release` and A finishes. B (same script) finds `release` and runs straight through.
+        String script = "echo enter >> trace; while [ ! -f release ]; do sleep 0.05; done; echo exit >> trace";
         WorkflowJob a = persistentJob("lock", script, "");
         WorkflowJob b = persistentJob("lock", script, "");
-        Future<WorkflowRun> fa = a.scheduleBuild2(0);
-        Future<WorkflowRun> fb = b.scheduleBuild2(0);
+        QueueTaskFuture<WorkflowRun> fa = a.scheduleBuild2(0);
+        long end = System.currentTimeMillis() + 60_000;
+        while (!cloud.anyProcessRunning() && System.currentTimeMillis() < end) {
+            Thread.sleep(50);
+        }
+        assertTrue(cloud.anyProcessRunning(), "build A never entered the sandbox");
+        WorkflowRun runB = b.scheduleBuild2(0).waitForStart();
+        while (!JenkinsRule.getLog(runB).contains("Waiting for persistent sandbox 'lock' (in use by ")
+                && System.currentTimeMillis() < end) {
+            Thread.sleep(50);
+        }
+        r.assertLogContains("Waiting for persistent sandbox 'lock' (in use by ", runB);
+        Files.writeString(workDir("sb1").resolve("release"), "go");
         WorkflowRun ra = r.assertBuildStatusSuccess(fa);
-        WorkflowRun rb = r.assertBuildStatusSuccess(fb);
+        WorkflowRun rb = r.assertBuildStatusSuccess(r.waitForCompletion(runB));
         assertEquals(List.of("enter", "exit", "enter", "exit"), Files.readAllLines(workDir("sb1").resolve("trace")));
-        String logs = JenkinsRule.getLog(ra) + JenkinsRule.getLog(rb);
-        assertTrue(logs.contains("Waiting for persistent sandbox 'lock' (in use by "), logs);
+        assertTrue(ra.getTimeInMillis() <= rb.getTimeInMillis());
         assertEquals(1, cloud.account("user1").createAttempts.get(), "one sandbox serves both builds");
         assertEquals(1, cloud.liveSandboxes());
         assertLeasesAndLockReleased("lock");
